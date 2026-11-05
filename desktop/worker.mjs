@@ -79,7 +79,14 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
   const backupPath = join(logDir, "desktop-dns-backup.json");
   const guard = new WindowsGuard({ executable: join(resources, 'guard-filter', 'aiguard-guard-filter.exe'), dataDir });
   let settings, rawChild, activeConfig, protection, probePort, probeSecret, controllerSecret;
-  let lastBuiltDns, appliedDns;
+  let lastBuiltDns, appliedDns, activeInterfaceName = null;
+  const detectActiveInterface = async () => {
+    try {
+      const script = "$r = Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Where-Object { $_.NextHop -ne '0.0.0.0' } | Sort-Object { $_.RouteMetric + $_.InterfaceMetric } | Select-Object -First 1; if ($r) { (Get-NetAdapter -InterfaceIndex $r.InterfaceIndex).Name }";
+      const name = (await ps(script)).trim();
+      return name || null;
+    } catch { return null; }
+  };
   let businessBlocked = false, intentionalStop = false, configQueue = Promise.resolve();
   async function controller(endpoint, options = {}) {
     const response = await fetch(`http://127.0.0.1:${settings.controllerPort}/${endpoint}`, {
@@ -184,15 +191,20 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
       }
       if (!ensureGeodata(workDir, sourceMihomo))
         throw Error('缺少 Country.mmdb / geoip.dat / geosite.dat，请放在内核同目录');
-      // 关键修复：受保护模式下 workDir 是独立的私有目录 (runtime-<hex>)，
-      // 必须将 AppData 中已缓存的机场节点 (proxies/airport.yaml) 拷入。
-      // 否则在校园网等阻断订阅拉取域名的网络下，内核因目录为空无法加载前置节点，
-      // 导致独享住宅 IP 失去前置链路直接超时，误判断流。
+      activeInterfaceName = await detectActiveInterface();
+      if (activeInterfaceName) log(`检测到物理出口网卡: ${activeInterfaceName}，已显式绑定避免 auto-detect 失败`);
       const appDataProxies = join(dataDir, "mihomo", "proxies", "airport.yaml");
       if (existsSync(appDataProxies)) {
         const destDir = join(workDir, "proxies");
         mkdirSync(destDir, { recursive: true });
-        try { copyFileSync(appDataProxies, join(destDir, "airport.yaml")); } catch {}
+        try {
+          copyFileSync(appDataProxies, join(destDir, "airport.yaml"));
+          log("已同步 AppData 机场节点缓存到运行目录");
+        } catch (e) {
+          log("同步节点缓存失败: " + e.message);
+        }
+      } else {
+        log("AppData 中未找到机场节点缓存: " + appDataProxies);
       }
       const appDataCache = join(dataDir, "mihomo", "cache.db");
       if (existsSync(appDataCache)) {
@@ -313,6 +325,7 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
   function makeYaml(s, blocked = businessBlocked) {
     const cfg = buildConfig({
       ...s,
+      interfaceName: activeInterfaceName || undefined,
       secret: controllerSecret,
       sets: loadRuleSets(join(root, "rules", "domains")),
     });

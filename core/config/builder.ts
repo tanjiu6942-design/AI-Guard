@@ -13,6 +13,7 @@ export interface BuildOptions {
   secret: string;
   homeRegion: string;
   tunEnabled: boolean;
+  interfaceName?: string;
 }
 
 export function buildConfig(opts: BuildOptions): MihomoConfig {
@@ -67,12 +68,13 @@ export function buildConfig(opts: BuildOptions): MihomoConfig {
     // 把 idle 降到 10s 并每 5s 探测一次, 让中间设备和上游都认为连接活跃。
     'keep-alive-idle': 10,
     'keep-alive-interval': 5,
+    ...(opts.interfaceName ? { 'interface-name': opts.interfaceName } : {}),
 
     tun: {
       enable: opts.tunEnabled,
       stack: 'mixed',
       'auto-route': true,
-      'auto-detect-interface': true,
+      'auto-detect-interface': !opts.interfaceName,
       'dns-hijack': ['any:53'],
       'inet6-address': ['fdfe:dcba:9876::1/126'],
     },

@@ -24,6 +24,7 @@ export function configToYaml(c: MihomoConfig): string {
   if (c['unified-delay'] !== undefined) scalar('unified-delay', c['unified-delay']);
   if (c['keep-alive-idle'] !== undefined) scalar('keep-alive-idle', c['keep-alive-idle']);
   if (c['keep-alive-interval'] !== undefined) scalar('keep-alive-interval', c['keep-alive-interval']);
+  if (c['interface-name']) scalar('interface-name', c['interface-name']);
   scalar('external-controller', c['external-controller']);
   scalar('secret', c.secret);
 

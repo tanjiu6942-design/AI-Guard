@@ -83,6 +83,8 @@ export interface MihomoConfig {
   'keep-alive-idle'?: number;
   /** TCP keep-alive: 探测间隔(秒) */
   'keep-alive-interval'?: number;
+  /** 显式绑定物理出口网卡，避免 Windows 多网卡/校园网网关下 auto-detect 失败断网 */
+  'interface-name'?: string;
   'external-controller': string;
   secret: string;
   tun: TunConfig;
