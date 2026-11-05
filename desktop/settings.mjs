@@ -14,6 +14,7 @@ export function validateSettings(value) {
     secret,
     realtimeProtection = true,
     takeoverDns = true,
+    autoReconnect = true,
   } = value;
   if (!MODES.has(mode)) throw Error("请选择严格、精确或全局模式");
   for (const [name, port] of [
@@ -27,6 +28,7 @@ export function validateSettings(value) {
   if (typeof tunEnabled !== "boolean") throw Error("TUN 开关格式错误");
   if (typeof realtimeProtection !== 'boolean') throw Error('实时保护开关格式错误');
   if (typeof takeoverDns !== 'boolean') throw Error('修改网卡 DNS 开关格式错误');
+  if (typeof autoReconnect !== 'boolean') throw Error('自动复联开关格式错误');
   for (const v of [airportUrl, mihomoPath, homeRegion, secret])
     if (typeof v !== "string") throw Error("配置字段格式错误");
   if (airportUrl) {
@@ -59,6 +61,7 @@ export function validateSettings(value) {
     tunEnabled,
     realtimeProtection,
     takeoverDns,
+    autoReconnect,
     mihomoPath,
     homeRegion,
     secret,

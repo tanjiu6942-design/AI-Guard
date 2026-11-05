@@ -14,6 +14,7 @@ export interface Settings {
   tunEnabled: boolean;
   realtimeProtection?: boolean;
   takeoverDns?: boolean;
+  autoReconnect?: boolean;
   mihomoPath: string;
 }
 
@@ -29,6 +30,7 @@ export function defaultSettings(): Settings {
     tunEnabled: false,   // 并行验证期默认不开 TUN
     realtimeProtection: true,
     takeoverDns: true,
+    autoReconnect: true,
     mihomoPath: '',
   };
 }

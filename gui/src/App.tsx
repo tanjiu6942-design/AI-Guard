@@ -204,6 +204,23 @@ export default function App() {
     autoDetected.current = true;
     void detectZone(true);
   }, [routeAvailable]);
+  const autoCheckedClaude = useRef(false);
+  useEffect(() => {
+    if (!status?.running) {
+      autoCheckedClaude.current = false;
+    }
+  }, [status?.running]);
+  useEffect(() => {
+    if (!routeAvailable || autoCheckedClaude.current) return;
+    autoCheckedClaude.current = true;
+    const generation = ++checkGeneration.current;
+    // 首次连接成功（路由就绪、保护健康）后自动运行一次检测，立即展示 Claude 线路与 IP 结果
+    void api.doctor().then((results) => {
+      if (generation === checkGeneration.current) {
+        setChecks(results);
+      }
+    }).catch(() => {});
+  }, [routeAvailable]);
   const protectionLocked = ["locked", "lock_failed"].includes(protectionPhase);
   const protectionPending = ["checking", "locking", "recovering"].includes(
     protectionPhase,
@@ -233,7 +250,9 @@ export default function App() {
     ...claudeKeys.map((key) => (checks ?? []).find((c) => c.key === key) ?? {
       key, title: key === "claude-code" ? "Claude Code 线路" : "Claude 看到的 IP",
       state: "unknown" as const,
-      detail: "尚未运行手动体检；结果仅代表对应检查时间。",
+      detail: routeAvailable
+        ? "正在自动检测 Claude 线路与出口 IP..."
+        : "尚未运行网络体检；结果将在连接后自动检测。",
     }),
   ];
   const stateText =
@@ -805,6 +824,18 @@ export default function App() {
                       type="checkbox"
                       checked={settings.takeoverDns !== false}
                       onChange={(e) => patch("takeoverDns", e.target.checked)}
+                    />
+                  </label>
+                  <label className="switch-row">
+                    <div>
+                      <strong>异常断流后自动复联</strong>
+                      <span>网络波动或校园网短时间掉线后，后台自动复检，恢复时自动解除断流，无需每次手动点击。</span>
+                    </div>
+                    <input
+                      aria-label="异常断流后自动复联"
+                      type="checkbox"
+                      checked={settings.autoReconnect !== false}
+                      onChange={(e) => patch("autoReconnect", e.target.checked)}
                     />
                   </label>
                   {settings.realtimeProtection !== false && !settings.tunEnabled && (

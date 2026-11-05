@@ -15,8 +15,8 @@ export const STARTUP_GRACE_MS = 30000;
 
 export class ProtectionMonitor {
   constructor({ check, lock, unlock, notify = () => {}, now = Date.now,
-    schedule = setTimeout, cancel = clearTimeout }) {
-    Object.assign(this, { check, lock, unlock, notify, now, schedule, cancel });
+    schedule = setTimeout, cancel = clearTimeout, autoReconnect = false }) {
+    Object.assign(this, { check, lock, unlock, notify, now, schedule, cancel, autoReconnect });
     this.state = { phase: 'off', reason: null, error: null, checkedAt: null,
       fullCheckedAt: null, lockedAt: null, items: [] };
     this.generation = 0;
@@ -83,7 +83,12 @@ export class ProtectionMonitor {
     this.timer = this.schedule(() => {
       if (!this.active) return;
       if (this.state.phase === 'lock_failed') void this.trip(this.state.reason);
-      else if (['healthy', 'suspect', 'checking'].includes(this.state.phase)) {
+      else if (this.state.phase === 'locked') {
+        if (this.autoReconnect && !this.resumePromise && !this.tripPromise && this.now() >= (this.nextResume ?? 0)) {
+          this.nextResume = this.now() + 15000;
+          void this.resume().catch(() => {});
+        }
+      } else if (['healthy', 'suspect', 'checking'].includes(this.state.phase)) {
         void this.tick('local');
         if (this.retry.has('full') || this.now() >= this.nextFull) {
           this.nextFull = this.now() + 60000;
@@ -198,6 +203,7 @@ export class ProtectionMonitor {
   }
   trip(reason = '检测异常') {
     if (this.tripPromise) return this.tripPromise;
+    this.nextResume = this.now() + 10000;
     ++this.generation;
     // 真正锁定过一次: 之后的复检显示"已断流"而不是"检查中"
     this.everLocked = true;

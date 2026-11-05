@@ -125,6 +125,7 @@ export class WorkerProtection {
     // 监控器先建, 再把宽限期判定交给体检器 —— 两者共用同一个时钟源。
     const monitor = new ProtectionMonitor({
       lock: () => this.block(), unlock: valid => this.unblock(valid), notify: state => this.publish(state),
+      autoReconnect: this.settings?.autoReconnect !== false,
     });
     this.monitor = monitor;
     const health = this.check || createHealthChecker({

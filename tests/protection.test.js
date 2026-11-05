@@ -66,6 +66,41 @@ describe('continuous protection', () => {
     expect(deps.lock).not.toHaveBeenCalled();
     await monitor.shutdown();
   });
+  it('开启 autoReconnect 时在锁定后自动复检并恢复正常', async () => {
+    let now = 1000;
+    const timers = [];
+    const deps = {
+      check: vi.fn(async () => [good()]),
+      lock: vi.fn(async () => {}),
+      unlock: vi.fn(async () => {}),
+      notify: vi.fn(),
+      now: () => now,
+      schedule: (fn, ms) => {
+        const item = { fn, due: now + ms };
+        timers.push(item);
+        return item;
+      },
+      cancel: (item) => {
+        const i = timers.indexOf(item);
+        if (i >= 0) timers.splice(i, 1);
+      },
+      autoReconnect: true,
+    };
+    const monitor = new ProtectionMonitor(deps);
+    await monitor.start({ locked: true, reason: 'test' });
+    expect(monitor.snapshot().phase).toBe('locked');
+
+    // 触发定时器
+    now += 15000;
+    const due = timers.filter(t => t.due <= now);
+    for (const t of due) await t.fn();
+    await monitor.resumePromise;
+
+    expect(monitor.snapshot().phase).toBe('healthy');
+    expect(deps.unlock).toHaveBeenCalled();
+    await monitor.shutdown();
+  });
+
   it('does not treat collection errors as healthy', async () => {
     const { monitor, deps } = fixture();
     deps.check.mockRejectedValue(Error('permission denied'));

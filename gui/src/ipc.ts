@@ -15,6 +15,7 @@ export interface Settings {
   tunEnabled: boolean;
   realtimeProtection?: boolean;
   takeoverDns?: boolean;
+  autoReconnect?: boolean;
   mihomoPath: string;
 }
 export interface ProtectionStatus {
