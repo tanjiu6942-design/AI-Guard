@@ -244,22 +244,48 @@ export function createHealthChecker({ settings, controller, probePort, corePid,
    *   cloudflare-dns.com / www.cloudflare.com / challenges.cloudflare.com
    */
   const targets = ['cloudflare-dns.com', 'www.cloudflare.com', 'challenges.cloudflare.com'];
+
+  /**
+   * 单个端点探测。
+   *
+   * 报错信息里出现 "socket disconnected before secure TLS connection was established"，
+   * 表示 CONNECT 隧道已建立、但在 TLS 握手完成前被对端关闭 —— 这是住宅 SOCKS5
+   * 跨境通道拥塞时的典型表现（实测 16 并发全部成功，但每个耗时 10 秒；
+   * 并发越高排队越久，越过探针超时就被判成未响应）。
+   */
+  async function probeHost(host) {
+    try {
+      const r = await fetchFn(`https://${host}/cdn-cgi/trace`);
+      if (!r.ok) throw Error(`HTTP ${r.status}`);
+      const ip = /^ip=(.+)$/m.exec(await r.text())?.[1]?.trim();
+      if (!ip) throw Error('响应缺少出口 IP');
+      return { ip, error: null };
+    } catch (e) {
+      const detail = String(e.message).replace(/https?:\/\/\S+/g, '[URL]').slice(0, 200);
+      return { ip: null, error: `${host}: ${detail}` };
+    }
+  }
+
   async function exit() {
-    const errors = [];
-    const ips = await Promise.all(targets.map(async host => {
-      try {
-        const r = await fetchFn(`https://${host}/cdn-cgi/trace`);
-        if (!r.ok) throw Error(`HTTP ${r.status}`);
-        const ip = /^ip=(.+)$/m.exec(await r.text())?.[1]?.trim();
-        if (!ip) throw Error('响应缺少出口 IP');
-        return ip;
-      } catch (e) {
-        const detail = String(e.message).replace(/https?:\/\/\S+/g, '[URL]').slice(0, 200);
-        errors.push(`${host}: ${detail}`);
-        return null;
-      }
-    }));
-    const found = ips.filter(Boolean);
+    // 第一轮并发：正常情况一次拿到全部结果，耗时最短。
+    const first = await Promise.all(targets.map(probeHost));
+
+    /*
+     * 第二轮串行补探：只对第一轮失败的端点重试一次，且**串行**执行。
+     *
+     * 为什么不是加大并发或直接判 unknown：这三个探针走的是同一条住宅隧道，
+     * 三路并发本身就在互相抢通道。第一轮失败往往是排队而非链路真断，
+     * 此时再并发重试只会让拥塞更严重。改成串行，一次只占一个连接，
+     * 排队压力立刻下降，能显著减少"全部无响应"的误报。
+     */
+    const results = [...first];
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].ip) continue;
+      results[i] = await probeHost(targets[i]);
+    }
+
+    const errors = results.filter(r => r.error).map(r => r.error);
+    const found = results.map(r => r.ip).filter(Boolean);
     if (!found.length) return item('exit', '出口一致性', 'unknown', `所有受保护公共探测端点均未响应（${errors.join('；')}）`, false);
     if (new Set(found).size !== 1) return item('exit', '出口一致性', 'fail', '公共探测端点观察到不一致的出口');
     if (baseline && found[0] !== baseline) return item('exit', '出口一致性', 'fail', `实际出口改变：${baseline} → ${found[0]}`);

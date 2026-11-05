@@ -118,6 +118,36 @@ describe('strict continuous health checks', () => {
     const check = createHealthChecker({ settings: {}, fetchFn: async () => { throw Error('offline'); } });
     expect((await check('exit'))[0]).toMatchObject({ state: 'unknown', critical: false });
   });
+  it('首次探测失败的端点会串行补探一次，避免并发争抢通道造成全部无响应', async () => {
+    // 三个端点共用一条住宅隧道。模拟"第一轮全部失败、补探成功"，
+    // 结果应为 ok 而不是 unknown —— 这正是反复误断流的直接成因。
+    let calls = 0;
+    const check = createHealthChecker({
+      settings: {},
+      fetchFn: async () => {
+        calls++;
+        // 前 3 次（三个端点首探）全部失败，之后的补探成功
+        if (calls <= 3) throw Error('socket disconnected before secure TLS connection was established');
+        return { ok: true, text: async () => 'ip=203.0.113.10\n' };
+      },
+    });
+    const [result] = await check('exit');
+    expect(result.state).toBe('ok');
+    expect(result.detail).toContain('203.0.113.10');
+    // 首探 3 次 + 补探 3 次
+    expect(calls).toBe(6);
+  });
+
+  it('补探后仍失败的端点保持 unknown，不会被谎报为通过', async () => {
+    const check = createHealthChecker({
+      settings: {},
+      fetchFn: async () => { throw Error('socket disconnected'); },
+    });
+    const [result] = await check('exit');
+    expect(result.state).toBe('unknown');
+    expect(result.critical).toBe(false);
+  });
+
   it('preserves CONNECT failure evidence for diagnosis after network recovery', async () => {
     const check = createHealthChecker({ settings: {}, fetchFn: async () => { throw Error('CONNECT HTTP 403'); } });
     const [result] = await check('exit');
