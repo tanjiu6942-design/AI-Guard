@@ -90,16 +90,24 @@ export class ProtectionMonitor {
         }
       } else if (['healthy', 'suspect', 'checking'].includes(this.state.phase)) {
         void this.tick('local');
+        /*
+         * 自适应降频：自测本身要占用住宅 SOCKS5 通道。
+         * full 检测含一条 30 秒长连接 + 3 个出口 trace，全部走住宅链路 ——
+         * 固定 60 秒一次等于这条跨境通道有一半时间被自测占着，
+         * 业务连接只能排队甚至被服务端重置。
+         * 因此：链路健康时拉长间隔省出通道，一旦有异常立刻回到高频以便尽快确认。
+         */
+        const healthy = this.failures.size === 0;
         if (this.retry.has('full') || this.now() >= this.nextFull) {
-          this.nextFull = this.now() + 60000;
+          this.nextFull = this.now() + (healthy ? 180000 : 60000);
           void this.tick('full');
         } else if (this.retry.has('exit') || this.now() >= this.nextExit) {
-          this.nextExit = this.now() + 15000;
+          this.nextExit = this.now() + (healthy ? 45000 : 15000);
           void this.tick('exit');
         }
       }
       this.arm();
-    }, 5000);
+    }, 15000);
     this.timer?.unref?.();
   }
   tick(kind, release = false) {
@@ -162,20 +170,42 @@ export class ProtectionMonitor {
     const actionable = abnormal;
     if (abnormal.length) {
       const reason = abnormal.map(x => `${x.title}：${x.detail}`).join('；');
-      const repeatFail = actionable.some(x => x.critical || this.failures.has(x.key));
-      // The controller can answer before mihomo finishes loading providers.
-      // Keep startup quarantine and retry connectivity failures during grace;
-      // confirmed leaks, collection errors and manual recovery still fail closed.
+      /**
+       * 分级处置，只有「确认泄漏」才立即断流：
+       *
+       * - critical（出口改变 / 观察到不一致出口 / 网卡 DNS 泄漏）：任何阶段立刻 fail-closed
+       * - collectionFailed（连本机状态都读不到）：无法证明安全，立刻 fail-closed
+       * - 其余（出口探测端点全部无响应 unknown、长连接抖动 fail）都属于「无法判断」
+       *   或链路质量，不是泄漏。住宅 SOCKS5 跨境链路并发高时单连接排队可达 10 秒级，
+       *   把排队误判成泄漏会造成反复误断流。这类异常必须**连续 3 轮**仍然如此才断流。
+       *
+       * 计数放在 failures 里，成功一轮即清零，避免"断过一次就永久过敏"。
+       */
       const hasCriticalLeak = abnormal.some(x => x.critical);
-      if (release && (this.everLocked || collectionFailed || hasCriticalLeak || !this.inStartupGrace())) return this.trip(reason);
-      if (!release && repeatFail) return this.trip(reason);
-      for (const item of actionable) this.failures.set(item.key, true);
+      // 确认泄漏 / 采集失败：任何阶段立刻 fail-closed
+      if (collectionFailed || hasCriticalLeak) return this.trip(reason);
+      // 连续第 2 轮仍异常。刻意不因 unknown 而放宽：连续 unknown 必须锁死，
+      // 否则只要阻断探测端点就能让「出口一致性」永远无法判断，形成 fail-open
+      // （见 source-bypass 契约）。真正要治的是 unknown 的成因 —— 住宅链路连接被
+      // 重置、前置节点抖动、探针超时过紧，这些都在健康探测侧修，而不是放宽判定。
+      const persistent = abnormal.every(x => (this.failures.get(x.key) ?? 0) >= 1);
+      if (!release) {
+        // 运行期周期检测：不受启动宽限期约束，连续两轮即锁
+        if (persistent) return this.trip(reason);
+      } else if (this.everLocked || (!this.inStartupGrace() && persistent)) {
+        // 启动首检 / 断流后复检：宽限期外才锁；已锁定过的复检不通过就继续保持锁定
+        return this.trip(reason);
+      }
+      for (const item of actionable) this.failures.set(item.key, (this.failures.get(item.key) ?? 0) + 1);
       this.retry.add(kind);
       if (release) {
-        if (!this.everLocked && !collectionFailed && this.inStartupGrace()) {
+        if (!this.everLocked && this.inStartupGrace()) {
           this.emit({ phase: 'checking', reason: '启动检查中，业务流量暂时阻断', error: null });
+        } else if (this.state.phase === 'recovering') {
+          // 复检未通过：保持锁定（安全语义不变），交给自动复联周期重试，不重复粗暴断流
+          this.emit({ phase: 'locked', reason, error: null });
         } else {
-          return this.trip(reason);
+          this.emit({ phase: 'suspect', reason, error: null });
         }
       } else {
         this.emit({ phase: 'suspect', reason, error: null });
@@ -197,7 +227,11 @@ export class ProtectionMonitor {
         this.retry.clear();
         this.emit({ phase: 'healthy', reason: null, error: null, lockedAt: null });
       } catch (e) { return this.trip(`恢复失败：${e.message}`); }
-    } else if (this.state.phase !== 'checking' && !this.failures.size && this.state.items.every(x => x.state === 'ok')) this.emit({ phase: 'healthy', reason: null, error: null });
+    } else if (this.state.phase !== 'checking' && !this.failures.size && this.state.items.every(x => x.state === 'ok')) {
+      // 完整通过后解除"曾经锁定"的过敏状态，否则一次断流会让系统此后永久一碰就锁
+      this.everLocked = false;
+      this.emit({ phase: 'healthy', reason: null, error: null });
+    }
     else this.emit();
     return this.snapshot();
   }

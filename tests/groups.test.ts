@@ -27,11 +27,13 @@ describe('代理组', () => {
     expect(ai?.timeout).toBe(10000);
   });
 
-  it('前置组存在且为 fallback，并优先继承普通代理所选节点', () => {
+  it('前置组存在且为 fallback，且不依赖会自动切换的普通代理组', () => {
     const groups = buildGroups();
     const front = groups.find((g) => g.name === 'AI Guard 前置');
     expect(front?.type).toBe('fallback');
-    expect(front?.proxies).toContain('普通代理');
+    expect(front?.use).toContain('airport-sub');
+    // 前置节点频繁切换会重建住宅 dialer-proxy 并掐断在途 TLS 握手
+    expect(front?.proxies ?? []).not.toContain('普通代理');
   });
 
   it('含 url-test 自动选择组（从 早期实现 迁移）', () => {

@@ -59,9 +59,12 @@ export function buildGroups(): ProxyGroup[] {
       timeout: CHAIN_TIMEOUT,
     },
     {
+      // 不依赖「普通代理」：它是 select 组，默认指向 url-test 自动选择，
+      // 而自动选择会按延迟不停换节点。前置节点一换，住宅 dialer-proxy 就得重建，
+      // 在途 TLS 握手被掐断（实测：探测报 socket disconnected before TLS established）。
+      // 住宅出口只有一个，前置只需要「一个稳定可用的节点」，fallback 取第一个可用即最稳。
       name: G_FRONT,
       type: 'fallback',
-      proxies: [G_PROXY],
       use: ['airport-sub'],
       url: TEST_URL,
       interval: 120,

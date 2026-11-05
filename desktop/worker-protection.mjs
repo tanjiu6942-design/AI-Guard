@@ -131,8 +131,11 @@ export class WorkerProtection {
     const health = this.check || createHealthChecker({
       settings: this.settings, controller: this.controller, probePort: this.probePort, corePid,
       getDnsConfig: this.getDnsConfig,
-      fetchFn: url => proxyFetch(this.probePort, url, 12000, authorization),
-      long: longConnProbe(this.probePort, 30000, 10000, authorization),
+      // 住宅 SOCKS5 跨境链路在并发高时单连接排队可达 10 秒级（实测 16 并发全部成功
+      // 但每个都要 10 秒）。12s/10s 的超时会把"正在排队"误判成"链路断开"，
+      // 表现为 TLS 握手阶段 socket 被关闭并触发误断流。放宽到 25s 留足排队余量。
+      fetchFn: url => proxyFetch(this.probePort, url, 25000, authorization),
+      long: longConnProbe(this.probePort, 30000, 25000, authorization),
       // 启动宽限期内 TUN/IPv6 未就绪判 unknown, 不当作泄漏
       inStartupGrace: () => monitor.inStartupGrace(),
     });
