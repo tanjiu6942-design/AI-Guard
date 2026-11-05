@@ -184,6 +184,20 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
       }
       if (!ensureGeodata(workDir, sourceMihomo))
         throw Error('缺少 Country.mmdb / geoip.dat / geosite.dat，请放在内核同目录');
+      // 关键修复：受保护模式下 workDir 是独立的私有目录 (runtime-<hex>)，
+      // 必须将 AppData 中已缓存的机场节点 (proxies/airport.yaml) 拷入。
+      // 否则在校园网等阻断订阅拉取域名的网络下，内核因目录为空无法加载前置节点，
+      // 导致独享住宅 IP 失去前置链路直接超时，误判断流。
+      const appDataProxies = join(dataDir, "mihomo", "proxies", "airport.yaml");
+      if (existsSync(appDataProxies)) {
+        const destDir = join(workDir, "proxies");
+        mkdirSync(destDir, { recursive: true });
+        try { copyFileSync(appDataProxies, join(destDir, "airport.yaml")); } catch {}
+      }
+      const appDataCache = join(dataDir, "mihomo", "cache.db");
+      if (existsSync(appDataCache)) {
+        try { copyFileSync(appDataCache, join(workDir, "cache.db")); } catch {}
+      }
       activeConfig = join(workDir, `desktop-config-${randomBytes(6).toString('hex')}.yaml`);
       // 启动配置直接用"正常态"(不带 MATCH,REJECT)。
       //
@@ -223,6 +237,18 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
         onExit: (fn) =>
           rawChild.once("close", async () => {
             log("mihomo 已退出");
+            try {
+              const updatedProxies = join(workDir, "proxies", "airport.yaml");
+              if (existsSync(updatedProxies)) {
+                const destDir = join(dataDir, "mihomo", "proxies");
+                mkdirSync(destDir, { recursive: true });
+                copyFileSync(updatedProxies, join(destDir, "airport.yaml"));
+              }
+              const updatedCache = join(workDir, "cache.db");
+              if (existsSync(updatedCache)) {
+                copyFileSync(updatedCache, join(dataDir, "mihomo", "cache.db"));
+              }
+            } catch {}
             // 内核退出不等于"检测到危险"。
             //
             // 只有在本进程并未主动收尾(closing=false)且用户也不是在停止时,
