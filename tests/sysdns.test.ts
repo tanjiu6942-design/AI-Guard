@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TUN_DNS, TUN_DNS6, buildApplyScript, buildRestoreScript } from '../core/runtime/sysdns';
+import { TUN_DNS, TUN_DNS6, buildApplyScript, buildRestoreScript, buildCleanupResidualDnsScript, buildListScript } from '../core/runtime/sysdns';
 
 describe('系统 DNS 接管', () => {
   it('TUN DNS 地址符合规范', () => {
@@ -52,5 +52,19 @@ describe('系统 DNS 接管', () => {
     });
     expect(s).toContain('8.8.8.8');
     expect(s).toContain('19');
+  });
+
+  it('保底清理脚本包含隧道 DNS 判定与重置命令', () => {
+    const s = buildCleanupResidualDnsScript();
+    expect(s).toContain(TUN_DNS);
+    expect(s).toContain(TUN_DNS6);
+    expect(s).toContain('ResetServerAddresses');
+    expect(s).toContain('Clear-DnsClientCache');
+  });
+
+  it('网卡列表采集时过滤掉隧道 DNS，防止备份被污染', () => {
+    const s = buildListScript();
+    expect(s).toContain(TUN_DNS);
+    expect(s).toContain(TUN_DNS6);
   });
 });

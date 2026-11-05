@@ -25,8 +25,8 @@ export function buildListScript(): string {
     "Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -notmatch 'Meta|Mihomo|Clash|TUN|TAP|WireGuard|Loopback|Hyper-V|VMware|VirtualBox|Bluetooth' } | ForEach-Object {",
     '  $i = $_.ifIndex',
     '  $all = Get-DnsClientServerAddress -InterfaceIndex $i -ErrorAction SilentlyContinue',
-    '  $v4 = ($all | Where-Object { $_.AddressFamily -eq 2 }).ServerAddresses',
-    '  $v6 = ($all | Where-Object { $_.AddressFamily -eq 23 }).ServerAddresses',
+    '  $v4 = @(($all | Where-Object { $_.AddressFamily -eq 2 }).ServerAddresses | Where-Object { $_ -ne "' + TUN_DNS + '" })',
+    '  $v6 = @(($all | Where-Object { $_.AddressFamily -eq 23 }).ServerAddresses | Where-Object { $_ -ne "' + TUN_DNS6 + '" })',
     '  [PSCustomObject]@{ index = $i; name = $_.Name; servers = @($v4); servers6 = @($v6) }',
     '} | ConvertTo-Json -Compress',
   ].join('\n');
@@ -71,6 +71,26 @@ export function buildApplyScript(ipv6: boolean): string {
  * PowerShell 自动归类。若原本没有 v6, 只需传 v4, v6 会随
  * -ResetServerAddresses 回到 DHCP 下发。
  */
+/**
+ * 清理隧道 DNS 残留的保底脚本。
+ * 无论是否有备份文件，只要物理网卡上仍挂着 198.18.0.2 或 fdfe:dcba:9876::2，
+ * 就一律重置回 DHCP，防止因异常关闭或切换网络后断网。
+ */
+export function buildCleanupResidualDnsScript(): string {
+  return [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    "Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -notmatch 'Meta|Mihomo|Clash|TUN|TAP|WireGuard|Loopback|Hyper-V|VMware|VirtualBox|Bluetooth' } | ForEach-Object {",
+    '  $i = $_.ifIndex',
+    '  $all = Get-DnsClientServerAddress -InterfaceIndex $i -ErrorAction SilentlyContinue',
+    '  $servers = @($all.ServerAddresses | ForEach-Object { "$_" })',
+    `  if ($servers -contains '${TUN_DNS}' -or $servers -contains '${TUN_DNS6}') {`,
+    '    Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses',
+    '  }',
+    '}',
+    'Clear-DnsClientCache',
+  ].join('\n');
+}
+
 export function buildRestoreScript(backup: DnsBackup): string {
   const lines = [
     "$ErrorActionPreference = 'SilentlyContinue'",

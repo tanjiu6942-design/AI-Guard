@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import pkg from "../package.json";
 import {
   api,
   type Status,
@@ -411,7 +412,7 @@ export default function App() {
             <p className="eyebrow">AI GUARD / WINDOWS</p>
             <h1>{pages.find((p) => p.key === page)?.label}</h1>
           </div>
-          <span className="desktop-badge">桌面版 · 0.3.1</span>
+          <span className="desktop-badge">桌面版 · {pkg.version}</span>
         </header>
         {notice && (
           <div

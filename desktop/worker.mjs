@@ -25,6 +25,7 @@ import {
   listAdapters,
   buildApplyScript,
   buildRestoreScript,
+  buildCleanupResidualDnsScript,
 } from "../dist/core/runtime/sysdns.js";
 import { KernelSession } from "./kernel-session.mjs";
 import { requireConnection } from "./settings.mjs";
@@ -120,9 +121,15 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
     return task;
   }
   const restoreDns = async () => {
-    if (!existsSync(backupPath)) return;
-    await ps(buildRestoreScript(JSON.parse(readFileSync(backupPath, "utf8"))));
-    unlinkSync(backupPath);
+    if (existsSync(backupPath)) {
+      try {
+        await ps(buildRestoreScript(JSON.parse(readFileSync(backupPath, "utf8"))));
+      } finally {
+        try { unlinkSync(backupPath); } catch {}
+      }
+    }
+    // 兜底保底：即使没有备份文件（或崩溃后重启），物理网卡上残留的 TUN DNS 强制重置
+    await ps(buildCleanupResidualDnsScript());
     log("DNS 已恢复");
   };
   const session = new KernelSession({
