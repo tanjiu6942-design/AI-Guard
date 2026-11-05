@@ -47,6 +47,18 @@ describe('effective Internet route ownership', () => {
     snapshot.routes.push(route('0.0.0.0/1', 'Other', 100, 1));
     expect(routeResult(snapshot, 4)).toBe('ok');
   });
+  it('免改网卡模式 (takeoverDns: false) 下物理网卡保留原始 DNS 时 DNS 接管仍判 ok', () => {
+    const snapshot = routedSystem();
+    snapshot.dns = [{ iface: 'WLAN', servers: ['172.28.251.14', '114.114.114.114'] }];
+    // 默认开启 takeoverDns 时判 fail
+    const defaultRes = evaluateSystem(snapshot, 0).find(x => x.key === 'dns');
+    expect(defaultRes.state).toBe('fail');
+    // 关闭 takeoverDns 时判 ok (由 TUN dns-hijack 负责接管)
+    const customRes = evaluateSystem(snapshot, 0, { takeoverDns: false }).find(x => x.key === 'dns');
+    expect(customRes.state).toBe('ok');
+    expect(customRes.detail).toContain('免改网卡');
+  });
+
   it('uses a preferred Meta default for an uncovered half', () => {
     const snapshot = routedSystem();
     snapshot.routes = snapshot.routes.filter(r => r.prefix !== '128.0.0.0/1');

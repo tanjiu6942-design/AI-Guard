@@ -128,9 +128,10 @@ function ownsInternetRoutes(routes, family, localNetworks = []) {
  * 真实的接管失效不会被放过。
  */
 export function evaluateSystem(s, ownPid, options = {}) {
+  const takeoverDns = options.takeoverDns !== false;
   const taken = new Set(['198.18.0.2', 'fdfe:dcba:9876::2']);
   const dns = s.dns ?? [];
-  const unsafe = dns.flatMap(e => (e.servers ?? []).filter(a => !taken.has(a.toLowerCase())).map(a => `${e.iface}: ${a}`));
+  const unsafe = takeoverDns ? dns.flatMap(e => (e.servers ?? []).filter(a => !taken.has(a.toLowerCase())).map(a => `${e.iface}: ${a}`)) : [];
   const dnsComplete = dns.length > 0 && dns.every(e => e.servers?.length > 0);
   const others = (s.processes ?? []).filter(p => p.pid !== ownPid);
   const route4 = Array.isArray(s.routes) ? ownsInternetRoutes(s.routes, 4, s.localNetworks) : s.route4;
@@ -157,7 +158,15 @@ export function evaluateSystem(s, ownPid, options = {}) {
         : tunAmbiguous ? 'Meta 与物理网卡的接管路由优先级并列，无法确定实际走向'
         : grace ? '内核启动中，TUN 网卡与接管路由尚未建立'
         : 'TUN 网卡或 IPv4 接管路由失效'),
-    item('dns', 'DNS 接管', !dnsComplete ? 'unknown' : unsafe.length ? 'fail' : 'ok', !dnsComplete ? '无法确认在线物理网卡的 DNS 配置' : unsafe.length ? `DNS 配置偏离隧道地址：${unsafe.join('、')}` : '在线物理网卡 DNS 已接管'),
+    item('dns', 'DNS 接管',
+      !takeoverDns ? 'ok'
+        : !dnsComplete ? 'unknown'
+        : unsafe.length ? 'fail'
+        : 'ok',
+      !takeoverDns ? '免改网卡模式：由 TUN 内核透明劫持 53 端口 (dns-hijack)，物理网卡保持正常 DHCP'
+        : !dnsComplete ? '无法确认在线物理网卡的 DNS 配置'
+        : unsafe.length ? `DNS 配置偏离隧道地址：${unsafe.join('、')}`
+        : '在线物理网卡 DNS 已接管'),
     item('ipv6', 'IPv6 防泄漏',
       ipv6Ok ? 'ok' : (grace || ipv6Ambiguous) ? 'unknown' : 'fail',
       !s.hasPublicIpv6 ? '没有物理网卡公网 IPv6'
@@ -249,7 +258,7 @@ export function createHealthChecker({ settings, controller, probePort, corePid,
   }
   async function local() {
     const [snapshot, configs, rules] = await Promise.all([systemSnapshot(), controller('configs'), controller('rules')]);
-    const items = evaluateSystem(snapshot, corePid, { gracePeriod: inStartupGrace() });
+    const items = evaluateSystem(snapshot, corePid, { gracePeriod: inStartupGrace(), takeoverDns: settings?.takeoverDns !== false });
     if (getDnsConfig) {
       let sourceHost;
       try { sourceHost = new URL(settings.airportUrl).hostname; } catch {}
