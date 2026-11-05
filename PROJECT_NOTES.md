@@ -576,6 +576,57 @@ buildSourceRules(cfg["proxy-providers"]?.["airport-sub"]?.url ?? "")
 
 ---
 
+### 坑 22：国内 DoH 被分流规则误送进美国住宅链路，引发 SOCKS5 隧道拥塞与反复断流
+
+**现象**：连接成功后频繁出现反复断流，提示：
+`出口一致性：所有受保护公共探测端点均未响应（...: [TLS] Client network socket disconnected before secure TLS connection was established）；长连接稳定性：连接在 5.0s 时被断开`
+
+**排查**：
+查内核日志发现底层瞬间堆积了数十条：
+`[TCP] dial AI Guard 专用 (match Domain/doh.pub) ... --> doh.pub:443 error: context deadline exceeded`
+原来在 `core/config/rules.ts` 中，`DOH_DOMAINS` 列表中包含了国内公共 DoH 服务器（`doh.pub` 腾讯、`dns.alidns.com` 阿里、`doh.360.cn` 360），并且全部硬编码分流到了 `AI Guard 专用`（走美国独享住宅 IP）。
+而国内解析策略（`geosite:cn`）配置了 `doh.pub`。当电脑发起大量国内应用域名解析时，数十个高频 DoH 请求被强行送往美国住宅 IP 访问腾讯国内服务器，腾讯对境外来源施加了限速与丢包，导致请求大量超时（`context deadline exceeded`）。
+单个住宅 SOCKS5 通道被几十个超时的 DoH 请求瞬间打满阻塞，触发了 SOCKS5 代理服务端强制重置（RST），导致并发进行的 Cloudflare 出口探测与长连接在 TLS 握手阶段就被底层强拔网线（`socket disconnected before secure TLS connection was established`），进而误触发断流保护。
+
+**修复**：
+1. 从 `DOH_DOMAINS` 中剥离国内 DoH 域名（`doh.pub`、`dns.alidns.com`、`doh.360.cn`），在规则表中明确声明为 `DIRECT` 直连：
+   ```ts
+   const DOMESTIC_DOH = ['DOMAIN,doh.pub', 'DOMAIN,dns.alidns.com', 'DOMAIN,doh.360.cn'];
+   for (const r of DOMESTIC_DOH) aiRules.push(`${r},DIRECT`);
+   ```
+2. 只有海外公共 DoH（`1.1.1.1`、`dns.google`、`cloudflare-dns.com` 等）才走住宅专用组防泄漏。
+3. 国内域名 DoH 解析直接在本地 15ms 内秒级直连响应，彻底解除海外住宅代理的并发拥塞。
+
+**教训**：**境内基础设施域名绝对不能反向送往境外出口**。DNS 服务器本身的流量如果走错出口，会把高频的底层信令直接变成阻塞代理通道的雪崩源头。
+
+---
+
+### 坑 23：反复误断流的真根因 —— 前置节点抖动 + 探针超时过紧 + 自测抢占住宅通道
+
+**现象**：修复 DoH 后仍然「特别频繁」地反复断流，报错固定为：
+`出口一致性：所有受保护公共探测端点均未响应（...[TLS] Client network socket disconnected before secure TLS connection was established）；长连接稳定性：连接在 5.0s 时被断开`
+
+**排查（三条独立证据）**：
+
+1. **压测证明瓶颈是"连接被重置"而非"速度慢"**：对住宅链路做并发压测，3/8/16 并发**全部成功**，但 16 并发时每个连接耗时 10.1 秒（3 并发仅 3.9 秒）。说明住宅 SOCKS5 跨境通道吞吐有限，并发一高就排队到 10 秒级。
+2. **断流诊断日志显示前置节点在抖**：同一分钟内 `AI Guard 前置 now` 从「普通代理」变成「香港S01」，`AI Guard 自动选择` 从「香港S07」变成「新加坡S03」。前置节点一换，住宅节点的 `dialer-proxy` 就要重建底层链路，**在途的 TLS 握手被直接掐断** —— 这正好产生 `socket disconnected before secure TLS connection was established`。
+3. **自测自己在抢通道**：full 检测含一条 30 秒长连接 + 3 个出口 trace，全部走住宅链路，固定 60 秒一次 —— 等于这条跨境通道有一半时间被自测占着；exit 检测 15 秒一次 ×3 并发 = 每分钟 12 条自测连接，而业务流量每分钟才 30 条左右。
+
+**修复（四条）**：
+
+1. **探针超时 12s/10s → 25s**（`desktop/worker-protection.mjs`）：给跨境排队留足余量，避免"正在排队"被误判成"链路断开"。
+2. **前置组不再依赖会自动切换的「普通代理」**（`core/config/groups.ts`）：撤回上一轮加的 `proxies: [G_PROXY]`。住宅出口只有一个，前置只需要一个稳定可用节点，fallback 取第一个可用即最稳；让它跟着 url-test 抖，等于每次换节点都掐断住宅链路。
+3. **自测自适应降频**（`desktop/protection.mjs`）：链路健康时 full 60s→180s、exit 15s→45s，一旦出现异常立即回到高频（60s/15s）以便尽快确认。健康时就把通道让给业务流量。
+4. **全绿通过后重置 `everLocked`**：否则断过一次之后 `everLocked` 永久为 true，系统此后"一碰就锁"，越来越敏感。
+
+**教训**：
+
+- **判定层要严，测量层要准**。曾试图放宽 unknown 的判定阈值（连续 3 轮才锁）来止血，但那会破坏 `source-bypass` 契约 —— 只要阻断探测端点就能让出口一致性永远 unknown，形成 fail-open。**正确做法是修测量（超时、抖动、抢占），而不是放松判定**。
+- **安全客户端的自测流量必须计入成本**。长连接探测占一条跨境通道 30 秒，等于拿业务带宽换安全感；健康时必须降频。
+- **代理链的每一跳都要求稳定**。前置节点是住宅出口的"地基"，地基随便换，上层连接必然被掀翻。
+
+---
+
 ## 六、当前软件状态
 
 ### 已实现且验证通过
@@ -606,7 +657,13 @@ buildSourceRules(cfg["proxy-providers"]?.["airport-sub"]?.url ?? "")
 | 校园网免改网卡模式 | ✓ `takeoverDns: false` 保持物理网卡 DHCP，由 TUN 内核透明劫持，避免被学校网关断网（坑 19） |
 | 物理出口网卡精准绑定 | ✓ 动态探测物理默认网卡并注入 `interface-name: WLAN`，消除多网卡下 `<invalid>` 盲连超时（坑 20） |
 | 离线节点缓存预注入 | ✓ 将 AppData 节点缓存拷入隔离私有运行目录，校园网阻断订阅拉取时依然有 46 个节点可用（坑 21） |
-| 测试 | ✓ 361 个用例（360 passed + 1 skipped，e2e 条件不满足时跳过） |
+| 国内 DoH 纯净直连 | ✓ `doh.pub` 等国内 DNS 走 `DIRECT`，彻底消除 SOCKS5 隧道拥塞断开（坑 22） |
+| 前置节点稳定不抖 | ✓ 前置组不再跟随 url-test 自动切换，杜绝住宅 dialer-proxy 重建掐断 TLS（坑 23） |
+| 探针超时抗排队 | ✓ 跨境排队实测可达 10s，探针超时放宽到 25s，不再误判为断开（坑 23） |
+| 自测自适应降频 | ✓ 健康时 full 180s / exit 45s，异常时回到 60s / 15s，把通道让给业务流量（坑 23） |
+| 异常断流自动复联自愈 | ✓ 后台自动复检重试，外网或代理自愈后自动解除断流（无需每次手动点击） |
+| Claude 专项连接即显 | ✓ 首次连接成功后后台静默触发检测，1~2 秒内自动呈现真实通过结果 |
+| 测试 | ✓ 369 个用例（368 passed + 1 skipped，e2e 条件不满足时跳过） |
 | 规则集完整度 | ✓ 10 个规则集，100% 覆盖 早期实现（含 Gemini / Google 支付） |
 
 ### 未完成 / 已知限制
@@ -658,6 +715,12 @@ buildSourceRules(cfg["proxy-providers"]?.["airport-sub"]?.url ?? "")
 13. **局域网接入凭据（网卡参数）与流量劫持层级必须解耦**。物理网卡的 DNS 是跟局域网网关通信的凭据，粗暴篡改会触发合规审计；流量劫持应当在虚拟驱动/数据包层透明完成（坑 19）。
 
 14. **跨平台核心的黑盒自动探测不能全信**。多网卡环境下自动探测失败会导致出口失效为 `<invalid>`，必须在上层用明确的系统 API 探测并显式注入（坑 20）。
+
+15. **境内基础设施域名绝不能反向送往境外出口**。国内 DoH 如果被粗暴丢进海外住宅链路，海量超时的国内解析会瞬间冲垮跨境 SOCKS5 代理隧道（坑 22）。
+
+16. **判定层要严，测量层要准**。怀疑误报时先修测量（超时、抖动、资源抢占），不要靠放宽判定阈值止血 —— 放宽 unknown 会直接换来 fail-open（坑 23）。
+
+17. **安全客户端的自测流量本身就是成本**。一条 30 秒长连接探测就占掉一条跨境通道，固定高频自测等于拿业务带宽换安全感（坑 23）。
 
 ---
 
