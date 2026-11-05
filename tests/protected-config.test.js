@@ -186,6 +186,15 @@ describe.skipIf(process.platform !== "win32" || !existsSync(mihomo))("bundled mi
       expect(socksConnections).toBe(1);
       expect(requests).toBe(1);
       expect(targetAuthorizations).toEqual([undefined]);
+      const connectStatus = await new Promise((resolve, reject) => {
+        const req = request({ hostname: '127.0.0.1', port: probePort, method: 'CONNECT',
+          path: `127.0.0.1:${targetPort}`, headers: { 'Proxy-Authorization': authorization } });
+        req.on('connect', (res, socket) => { socket.destroy(); resolve(res.statusCode); });
+        req.on('error', reject);
+        req.setTimeout(2000, () => req.destroy(Error('CONNECT timeout')));
+        req.end();
+      });
+      expect(connectStatus).toBe(200);
       const ordinary = await proxyRequest(mixedPort, url).catch(() => null);
       expect(ordinary?.status).not.toBe(200);
       expect(requests).toBe(1);

@@ -14,8 +14,9 @@ describe('系统 DNS 接管', () => {
     expect(s).toContain(TUN_DNS);
   });
 
-  it('含 IPv6 时脚本包含 TUN_DNS6', () => {
-    expect(buildApplyScript(true)).toContain(TUN_DNS6);
+  it('物理网卡仅接管 IPv4 TUN_DNS，保持 IPv6 纯净（对齐商用策略防蓝屏与校园网审计）', () => {
+    expect(buildApplyScript(true)).toContain(TUN_DNS);
+    expect(buildApplyScript(true)).not.toContain(TUN_DNS6);
   });
 
   it('绝不能使用 -AddressFamily 参数（该参数不存在，会让命令静默失败）', () => {
@@ -28,13 +29,10 @@ describe('系统 DNS 接管', () => {
     expect(buildRestoreScript(backup)).not.toContain('AddressFamily');
   });
 
-  it('IPv6 地址与 IPv4 地址一起传给 -ServerAddresses（由 PowerShell 自动归类）', () => {
+  it('网卡只传 IPv4 地址，由系统自动清空 IPv6 DNS', () => {
     const s6 = buildApplyScript(true);
     expect(s6).toContain('198.18.0.2');
-    expect(s6).toContain('fdfe:dcba:9876::2');
-    // 一条命令里同时给出两种地址
-    const cmd = s6.split('\n').find((l) => l.includes('Set-DnsClientServerAddress'));
-    expect(cmd).toMatch(/198\.18\.0\.2.*fdfe:dcba:9876::2/);
+    expect(s6).not.toContain('fdfe:dcba:9876::2');
   });
 
   it('不接管 IPv6 时只传 IPv4 地址', () => {

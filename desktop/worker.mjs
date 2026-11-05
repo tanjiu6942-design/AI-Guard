@@ -2,6 +2,7 @@ import { connect, createServer } from "node:net";
 import { spawn, execFile } from "node:child_process";
 import {
   existsSync,
+  copyFileSync,
   mkdirSync,
   writeFileSync,
   readFileSync,

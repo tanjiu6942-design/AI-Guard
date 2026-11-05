@@ -27,10 +27,11 @@ describe('代理组', () => {
     expect(ai?.timeout).toBe(10000);
   });
 
-  it('前置组存在且为 fallback', () => {
+  it('前置组存在且为 fallback，并优先继承普通代理所选节点', () => {
     const groups = buildGroups();
     const front = groups.find((g) => g.name === 'AI Guard 前置');
     expect(front?.type).toBe('fallback');
+    expect(front?.proxies).toContain('普通代理');
   });
 
   it('含 url-test 自动选择组（从 早期实现 迁移）', () => {

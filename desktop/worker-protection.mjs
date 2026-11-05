@@ -4,6 +4,7 @@ import { ProtectionMonitor } from './protection.mjs';
 import { createHealthChecker } from './health.mjs';
 import { proxyFetch } from './network.mjs';
 import { longConnProbe } from './probes.mjs';
+import { collectProtectionDiagnostics } from './protection-diagnostics.mjs';
 
 export const emptyProtection = () => ({ phase: 'off', reason: null, error: null, items: [], checkedAt: null, fullCheckedAt: null, lockedAt: null });
 export function readProtectionState(dataDir) {
@@ -43,7 +44,8 @@ export class WorkerProtection {
     await this.guard.check();
     const previous = await this.guard.status();
     const recorded = readProtectionState(this.dataDir);
-    this.wasLocked = previous.locked || ['locked', 'locking', 'lock_failed', 'recovering'].includes(recorded.phase);
+    // 只要 WFP 原生层实际处于锁定状态，就严格保持锁定并等待复检，绝不静默解锁原生断流
+    this.wasLocked = previous.locked === true;
     this.previousReason = this.wasLocked ? recorded.reason || '存在尚未解除的系统断流' : null;
     this.publish({ ...emptyProtection(), phase: 'checking', reason: '启动前隔离业务流量' });
     // 隔离只靠 WFP 系统规则, 不改内核配置 —— 启动配置是正常态。
@@ -56,6 +58,12 @@ export class WorkerProtection {
     const errors = [];
     let confirmed = false;
     try { await this.guard.lock(this.kernelPath); confirmed = true; this.guardLocked = true; } catch (e) { errors.push(e.message); }
+    // Capture the pre-reload proxy state after enforcing the system lock.
+    try {
+      const report = await collectProtectionDiagnostics(this);
+      writeFileSync(join(this.dataDir, 'protection-diagnostic.json'), JSON.stringify({ at: new Date().toISOString(), items: this.snapshot().items, ...report }, null, 2));
+      this.log?.(`断流诊断: ${JSON.stringify(report)}`);
+    } catch { /* Diagnostics must not prevent enforcing the proxy lock. */ }
     try { await this.configure(true, confirmed); this.blockedConfig = true; } catch (e) { errors.push(e.message); }
     try { await this.controller('connections', { method: 'DELETE' }); } catch (e) { errors.push(e.message); }
     if (errors.length) throw Error(errors.join('；'));

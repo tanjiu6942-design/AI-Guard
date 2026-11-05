@@ -53,7 +53,10 @@ export function buildListScript(): string {
  * 当时把 v4/v6 写进了同一个地址族。自动归类不会产生这个问题。
  */
 export function buildApplyScript(ipv6: boolean): string {
-  const addrs = ipv6 ? `@('${TUN_DNS}','${TUN_DNS6}')` : `@('${TUN_DNS}')`;
+  // 对齐商用客户端成熟方案：物理网卡只接管 IPv4 的 198.18.0.2，IPv6 留空不注入虚拟地址。
+  // Windows 在物理网卡 IPv6 族无解析器时将所有域名查询 100% 逼进 IPv4 隧道由 DoH 加密解析，
+  // 既彻底杜绝 IPv6 DNS 泄漏，又根治了无线驱动状态变更时的蓝屏隐患并避免校园网审计报警。
+  const addrs = `@('${TUN_DNS}')`;
   return [
     "$ErrorActionPreference = 'SilentlyContinue'",
     "Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -notmatch 'Meta|Mihomo|Clash|TUN|TAP|WireGuard|Loopback|Hyper-V|VMware|VirtualBox|Bluetooth' } | ForEach-Object {",

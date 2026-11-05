@@ -9,7 +9,7 @@ async function fixture(fn) {
   const events=[];
   const guard={status:async()=>({locked:false}),check:async()=>events.push('check'),lock:async()=>events.push('lock'),unlock:async()=>events.push('unlock')};
   const runtime=new WorkerProtection({guard,dataDir:dir,settings:{},configure:async blocked=>events.push(blocked?'deny':'allow'),
-    controller:async()=>events.push('close'),emit:()=>{},check:async()=>[{key:'exit',title:'出口',state:'ok',detail:'valid'}]});
+    controller:async endpoint=>endpoint === 'proxies' ? { proxies: {} } : events.push('close'),emit:()=>{},check:async()=>[{key:'exit',title:'出口',state:'ok',detail:'valid'}]});
   try { await fn(runtime,guard,events,dir); } finally { await runtime.shutdown(); rmSync(dir,{recursive:true,force:true}); }
 }
 describe('privileged protection lifecycle',()=>{
@@ -27,6 +27,7 @@ describe('privileged protection lifecycle',()=>{
     await r.prepare('C:\\fixture\\mihomo.exe'); await r.activate(123); e.length=0;
     await r.trip('leak');
     expect(e).toEqual(['lock','deny','close']);
+    expect(JSON.parse(readFileSync(join(dir,'protection-diagnostic.json'))).controllerAvailable).toBe(true);
     expect(JSON.parse(readFileSync(join(dir,'protection-state.json'))).phase).toBe('locked');
   }));
   it('retains a system block even if proxy policy updates fail',async()=>fixture(async(r,_g,e)=>{

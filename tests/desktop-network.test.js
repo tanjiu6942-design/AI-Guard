@@ -19,6 +19,10 @@ async function withServer(handler, run) {
   }
 }
 describe("desktop network probe deadlines", () => {
+  it('records whether failure happened before CONNECT completed', async () => {
+    await withServer(s => s.once('data', () => s.end('HTTP/1.1 403 Forbidden\r\n\r\n')),
+      port => expect(proxyFetch(port, 'https://www.cloudflare.com/', 500)).rejects.toThrow('[CONNECT]'));
+  });
   it("sends proxy credentials on CONNECT using the explicit HTTPS target port", async () => {
     let received = "";
     const authorization = `Basic ${Buffer.from("aiguard-health:probe-secret").toString("base64")}`;

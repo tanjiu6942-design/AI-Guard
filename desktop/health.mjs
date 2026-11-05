@@ -11,12 +11,16 @@ export function checkDnsPolicy(dns, sourceHost) {
   if (!dns) return item('dns-policy', 'DNS 上游策略', 'unknown', '无法读取已加载的 DNS 上游配置', false);
   const protectedResolvers = new Set(['https://1.1.1.1/dns-query#AI Guard 专用']);
   const protectedList = values => Array.isArray(values) && values.length > 0 && values.every(v => protectedResolvers.has(v));
+  const cnResolvers = new Set(['https://223.5.5.5/dns-query', 'https://doh.pub/dns-query']);
   const policies = Object.entries(dns['nameserver-policy'] || {});
   const safe = dns.enable === true && protectedList(dns.nameserver)
     && !dns.fallback?.length && !dns['direct-nameserver']?.length
-    && policies.every(([key, values]) => key === sourceHost
-      ? Array.isArray(values) && values.length === 1 && values[0] === '223.5.5.5'
-      : protectedList(values));
+    && policies.every(([key, values]) =>
+      key === 'geosite:cn'
+        ? Array.isArray(values) && values.every(v => cnResolvers.has(v))
+        : key === sourceHost
+          ? Array.isArray(values) && values.length === 1 && values[0] === '223.5.5.5'
+          : protectedList(values));
   return item('dns-policy', 'DNS 上游策略', safe ? 'ok' : 'fail', safe
     ? '已加载策略将普通域名交给住宅链路的加密 DNS；订阅和代理节点保留引导解析。浏览器实际解析出口需外部复测'
     : '普通域名的 DNS 上游存在直连、回退或未认可的解析器');
@@ -241,15 +245,22 @@ export function createHealthChecker({ settings, controller, probePort, corePid,
    */
   const targets = ['cloudflare-dns.com', 'www.cloudflare.com', 'challenges.cloudflare.com'];
   async function exit() {
+    const errors = [];
     const ips = await Promise.all(targets.map(async host => {
       try {
         const r = await fetchFn(`https://${host}/cdn-cgi/trace`);
-        if (!r.ok) return null;
-        return /^ip=(.+)$/m.exec(await r.text())?.[1]?.trim() || null;
-      } catch { return null; }
+        if (!r.ok) throw Error(`HTTP ${r.status}`);
+        const ip = /^ip=(.+)$/m.exec(await r.text())?.[1]?.trim();
+        if (!ip) throw Error('响应缺少出口 IP');
+        return ip;
+      } catch (e) {
+        const detail = String(e.message).replace(/https?:\/\/\S+/g, '[URL]').slice(0, 200);
+        errors.push(`${host}: ${detail}`);
+        return null;
+      }
     }));
     const found = ips.filter(Boolean);
-    if (!found.length) return item('exit', '出口一致性', 'unknown', '所有受保护公共探测端点均未响应', false);
+    if (!found.length) return item('exit', '出口一致性', 'unknown', `所有受保护公共探测端点均未响应（${errors.join('；')}）`, false);
     if (new Set(found).size !== 1) return item('exit', '出口一致性', 'fail', '公共探测端点观察到不一致的出口');
     if (baseline && found[0] !== baseline) return item('exit', '出口一致性', 'fail', `实际出口改变：${baseline} → ${found[0]}`);
     if (found.length !== targets.length) return item('exit', '出口一致性', 'warn', `${found.length}/${targets.length} 个端点可验证，尚不能完整确认`, false);

@@ -37,6 +37,7 @@ export interface ProxyProvider {
   interval?: number;
   proxy?: string;
   payload?: Proxy[];
+  'exclude-filter'?: string;
   'health-check'?: {
     enable: boolean;
     url: string;

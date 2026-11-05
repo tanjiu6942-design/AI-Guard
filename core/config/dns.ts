@@ -59,6 +59,9 @@ export function buildDns(
     policy[sourceHost] = SOURCE_DNS_IPS.slice(0, 1);
   }
 
+  // 国内与校园内网域名使用国内快速 DoH 解析，避免被拖入海外住宅链路或自举死锁
+  policy['geosite:cn'] = ['https://223.5.5.5/dns-query', 'https://doh.pub/dns-query'];
+
   return {
     enable: true,
     // TUN 接管 IPv6 时必须让内核也处理 v6 解析, 否则 AAAA 查询会落到系统解析器

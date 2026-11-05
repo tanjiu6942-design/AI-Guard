@@ -118,6 +118,12 @@ describe('strict continuous health checks', () => {
     const check = createHealthChecker({ settings: {}, fetchFn: async () => { throw Error('offline'); } });
     expect((await check('exit'))[0]).toMatchObject({ state: 'unknown', critical: false });
   });
+  it('preserves CONNECT failure evidence for diagnosis after network recovery', async () => {
+    const check = createHealthChecker({ settings: {}, fetchFn: async () => { throw Error('CONNECT HTTP 403'); } });
+    const [result] = await check('exit');
+    expect(result.detail).toContain('cloudflare-dns.com: CONNECT HTTP 403');
+    expect(result.state).toBe('unknown');
+  });
   it('takes the local recovery snapshot after the long network probe completes', async () => {
     let current = system(), finishLong;
     const check = createHealthChecker({

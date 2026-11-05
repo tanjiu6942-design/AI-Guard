@@ -8,13 +8,15 @@ export function proxyFetch(port, url, timeout = 12000, proxyAuthorization) {
     const target = new URL(url);
     if (target.protocol !== "https:")
       return reject(Error("Only HTTPS probe targets are supported"));
-    let tunnel, responseRequest;
+    let tunnel, responseRequest, settled = false, stage = 'TCP';
     const agent = new Agent({ keepAlive: false });
     const finish = (err, result) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       agent.destroy();
       tunnel?.destroy();
-      err ? reject(err) : resolve(result);
+      err ? reject(Error(`[${stage}] ${err.message}`)) : resolve(result);
     };
     const timer = setTimeout(() => {
       req.destroy();
@@ -31,18 +33,23 @@ export function proxyFetch(port, url, timeout = 12000, proxyAuthorization) {
         ...(proxyAuthorization ? { "Proxy-Authorization": proxyAuthorization } : {}),
       },
     });
+    req.on('socket', socket => socket.once('connect', () => { stage = 'CONNECT'; }));
     req.on("error", (e) => finish(e));
     req.on("connect", (res, socket, head) => {
       tunnel = socket;
       if (res.statusCode !== 200)
         return finish(Error(`CONNECT HTTP ${res.statusCode}`));
       if (head.length) socket.unshift(head);
-      agent.createConnection = () =>
-        connect({
+      stage = 'TLS';
+      agent.createConnection = () => {
+        const tls = connect({
           socket,
           servername: target.hostname,
           rejectUnauthorized: true,
         });
+        tls.once('secureConnect', () => { stage = 'HTTPS'; });
+        return tls;
+      };
       responseRequest = httpsRequest(
         target,
         {

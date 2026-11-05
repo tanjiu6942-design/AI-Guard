@@ -38,6 +38,21 @@ describe('启动宽限期: TUN 未就绪不得判 fail', () => {
 });
 
 describe('监控器宽限期窗口', () => {
+  it('retries transient network failures while startup is quarantined', async () => {
+    const { monitor, deps } = fixture([
+      { key: 'exit', title: '出口', state: 'unknown', critical: false },
+      { key: 'long', title: '长连接', state: 'fail', critical: false },
+    ]);
+    await monitor.start();
+    expect(monitor.snapshot().phase).toBe('checking');
+    expect(deps.unlock).not.toHaveBeenCalled();
+    expect(deps.lock).not.toHaveBeenCalled();
+    deps.check.mockResolvedValue([{ key: 'exit', state: 'ok' }, { key: 'long', state: 'ok' }]);
+    await monitor.tick('full');
+    expect(monitor.snapshot().phase).toBe('healthy');
+    expect(deps.unlock).toHaveBeenCalledTimes(1);
+    await monitor.shutdown();
+  });
   function fixture(items) {
     const deps = {
       check: vi.fn(async () => items),
@@ -53,6 +68,22 @@ describe('监控器宽限期窗口', () => {
     const { monitor } = fixture([unknownExit]);
     await monitor.start();
     expect(monitor.inStartupGrace()).toBe(true);
+    await monitor.shutdown();
+  });
+  it('still locks on confirmed startup leaks', async () => {
+    const { monitor, deps } = fixture([{ key: 'exit', state: 'fail', critical: true }]);
+    await monitor.start();
+    expect(monitor.snapshot().phase).toBe('locked');
+    expect(deps.unlock).not.toHaveBeenCalled();
+    await monitor.shutdown();
+  });
+  it('locks if transient startup failures persist beyond grace', async () => {
+    const { monitor, deps } = fixture([{ key: 'long', state: 'fail', critical: false }]);
+    await monitor.start();
+    monitor.graceUntil = 0;
+    await monitor.tick('full');
+    expect(monitor.snapshot().phase).toBe('locked');
+    expect(deps.unlock).not.toHaveBeenCalled();
     await monitor.shutdown();
   });
 

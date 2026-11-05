@@ -61,6 +61,7 @@ export function buildGroups(): ProxyGroup[] {
     {
       name: G_FRONT,
       type: 'fallback',
+      proxies: [G_PROXY],
       use: ['airport-sub'],
       url: TEST_URL,
       interval: 120,
@@ -152,6 +153,7 @@ export function buildProviders(airportUrl: string): Record<string, ProxyProvider
       // 且受保护模式下 MATCH,REJECT 置顶会把内核自身的拉取流量一并拒掉。
       proxy: 'DIRECT',
       interval: 3600,
+      'exclude-filter': '^\\s*(官网|网址)\\s*[:：]|^[^:：]{0,10}(套餐|剩余|到期|过期|重置|流量)[^:：]{0,8}[:：]|版本太旧',
       'health-check': {
         enable: true,
         url: TEST_URL,

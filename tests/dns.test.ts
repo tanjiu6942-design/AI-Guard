@@ -5,7 +5,7 @@ describe('DNS 策略', () => {
   it('routes unlisted and domestic application domains through encrypted residential DNS', () => {
     const dns = buildDns([], 'CN', true, 'sub.example.com');
     expect(dns.nameserver).toEqual(['https://1.1.1.1/dns-query#AI Guard 专用']);
-    expect(dns['nameserver-policy']['geosite:cn']).toBeUndefined();
+    expect(dns['nameserver-policy']['geosite:cn']).toEqual(['https://223.5.5.5/dns-query', 'https://doh.pub/dns-query']);
     expect(dns['nameserver-policy']['sub.example.com']).toEqual(['223.5.5.5']);
     expect(dns['nameserver-policy']['.sub.example.com']).toBeUndefined();
     expect(dns['proxy-server-nameserver']).toEqual(['223.5.5.5', '119.29.29.29']);

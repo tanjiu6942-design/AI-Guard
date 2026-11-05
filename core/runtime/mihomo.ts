@@ -50,6 +50,7 @@ export function configToYaml(c: MihomoConfig): string {
     // provider 自己的出站代理: 拉订阅时用, 与业务规则无关。
     // 受保护模式会把 MATCH,REJECT 放在规则首位, 若不显式指定, 拉订阅会被自己的规则拦死。
     if (p.proxy) scalar('    proxy', p.proxy);
+    if (p['exclude-filter']) scalar('    exclude-filter', p['exclude-filter']);
     if (p.payload) {
       lines.push('    payload:');
       for (const node of p.payload) {

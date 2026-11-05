@@ -158,7 +158,11 @@ export class ProtectionMonitor {
     if (abnormal.length) {
       const reason = abnormal.map(x => `${x.title}：${x.detail}`).join('；');
       const repeatFail = actionable.some(x => x.critical || this.failures.has(x.key));
-      if (release && (this.everLocked || collectionFailed || abnormal.some(x => x.state === 'fail') || !this.inStartupGrace())) return this.trip(reason);
+      // The controller can answer before mihomo finishes loading providers.
+      // Keep startup quarantine and retry connectivity failures during grace;
+      // confirmed leaks, collection errors and manual recovery still fail closed.
+      const hasCriticalLeak = abnormal.some(x => x.critical);
+      if (release && (this.everLocked || collectionFailed || hasCriticalLeak || !this.inStartupGrace())) return this.trip(reason);
       if (!release && repeatFail) return this.trip(reason);
       for (const item of actionable) this.failures.set(item.key, true);
       this.retry.add(kind);
