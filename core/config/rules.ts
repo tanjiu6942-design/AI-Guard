@@ -64,9 +64,6 @@ const DOH_DOMAINS = [
   'DOMAIN-SUFFIX,dns.nextdns.io',
   'DOMAIN,doh.opendns.com',
   'DOMAIN,dns.adguard-dns.com',
-  'DOMAIN,doh.pub',
-  'DOMAIN,dns.alidns.com',
-  'DOMAIN,doh.360.cn',
   'DOMAIN,dns.twnic.tw',
   'DOMAIN-SUFFIX,doh.espr.fun',
   'DOMAIN,doh.libredns.gr',
@@ -123,7 +120,11 @@ export function buildRules(mode: Mode, sets: Record<string, string[]>): string[]
     for (const r of CLOUDFLARE_CATCH_ALL) aiRules.push(`${r},${G_AI}`);
   }
 
-  // DoH 域名与 IP 一律进专用组, 防止绕过 dns-hijack 从机场 IP 泄漏解析
+  // 国内 DoH 服务器走 DIRECT 直连，避免国内域名解析拖垮海外住宅 SOCKS5 链路
+  const DOMESTIC_DOH = ['DOMAIN,doh.pub', 'DOMAIN,dns.alidns.com', 'DOMAIN,doh.360.cn'];
+  for (const r of DOMESTIC_DOH) aiRules.push(`${r},DIRECT`);
+
+  // 海外公共 DoH 域名与 IP 进专用组, 防止绕过 dns-hijack 从机场 IP 泄漏解析
   aiRules.push(`DOMAIN,ipwho.is,${G_AI}`);
   for (const r of DOH_DOMAINS) aiRules.push(`${r},${G_AI}`);
   for (const r of DOH_IPS) aiRules.push(`${r},${G_AI},no-resolve`);
