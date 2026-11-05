@@ -4,7 +4,7 @@ ChatGPT / Claude / Gemini 防封工具。保证主流 AI 服务（OpenAI / Anthr
 
 ## Windows 桌面版（推荐）
 
-当前版本 0.3.1。安装包不入库（`release/` 已列入 `.gitignore`），用 `npm run desktop:dist` 生成。连接概览可切换普通代理节点、识别住宅出口时区并手动应用到 Windows，支持恢复原时区。网络体检固定展示 Claude Code 线路与 Claude 看到的 IP，点击完整体检更新专项结果。普通节点的延迟来自内核已有测量记录。Claude 无活跃连接或站点拒绝探测时显示待验证。时区位置来自 IP 定位服务，可通过下拉框人工调整。
+当前版本 0.3.2。安装包不入库（`release/` 已列入 `.gitignore`），用 `npm run desktop:dist` 生成。连接概览可切换普通代理节点、识别住宅出口时区并手动应用到 Windows，支持恢复原时区。网络体检固定展示 Claude Code 线路与 Claude 看到的 IP，点击完整体检更新专项结果。普通节点的延迟来自内核已有测量记录。Claude 无活跃连接或站点拒绝探测时显示待验证。时区位置来自 IP 定位服务，可通过下拉框人工调整。
 
 桌面版使用 Electron，支持 Windows 10 / 11 x64。安装包自带运行时、mihomo 和 geodata；无需安装 Node.js、打开浏览器或启动 9123 控制面板。
 
