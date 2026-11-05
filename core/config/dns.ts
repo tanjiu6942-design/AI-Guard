@@ -59,8 +59,23 @@ export function buildDns(
     policy[sourceHost] = SOURCE_DNS_IPS.slice(0, 1);
   }
 
-  // 国内与校园内网域名使用国内快速 DoH 解析，避免被拖入海外住宅链路或自举死锁
-  policy['geosite:cn'] = ['https://223.5.5.5/dns-query', 'https://doh.pub/dns-query'];
+  /**
+   * 国内域名使用系统解析器直连（system#DIRECT），而不是国内 DoH。
+   *
+   * 为什么不能用 223.5.5.5 / doh.pub：这些公共 DoH 只是"第一跳"，它们最终仍会
+   * 向运营商递归服务器要答案，DNS 泄漏检测站看到的出口就是运营商 DNS
+   * （实测报出 112.25.12.136 南京 / 211.138.19.59 广东 / 2409:8088:... 广东移动）。
+   * 换成 system#DIRECT 后，国内查询直接交给操作系统在校园网内的真实 DNS 解析，
+   * 不再经过内核伪造的任何上游 —— 既符合运营商/校园网的合规要求，
+   * 也不会被泄漏检测站误判成"内核把查询送去了境外"。
+   *
+   * 安全性不受影响：+ 国内域名本来就要走 DIRECT，解析结果只用于直连，
+   * 不涉及 AI 域名；AI 与海外域名仍由 nameserver-policy 的其它条目走住宅加密 DNS。
+   */
+  // 首选系统解析器（校园网/运营商真实 DNS），失败时回退阿里明文 DNS。
+  // 都用直连：内核自身出站 socket 绑定 interface-name 指定的物理网卡，
+  // 不会命中 TUN 的 dns-hijack，因此不会形成解析回环。
+  policy['geosite:cn'] = ['system#DIRECT', '223.5.5.5'];
 
   return {
     enable: true,
