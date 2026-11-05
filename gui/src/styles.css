@@ -358,6 +358,9 @@ nav {
   margin-bottom: 18px;
   font-size: 13px;
   overflow-wrap: anywhere;
+  /* 启动前置门的拦截说明是多行的：保留换行，别压成一大段。
+     现有单行提示渲染结果不变。 */
+  white-space: pre-line;
 }
 .notice.error {
   background: #352526;
