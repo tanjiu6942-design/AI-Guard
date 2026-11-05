@@ -1,0 +1,6 @@
+# pay-google.yaml · Google 付款 (Google One / Gemini 订阅) 与 Chrome 商店
+payload:
+  - DOMAIN,one.google.com
+  - DOMAIN,payments.google.com
+  - DOMAIN,pay.google.com
+  - DOMAIN-SUFFIX,chrome.google.com

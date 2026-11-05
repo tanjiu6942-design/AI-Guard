@@ -1,0 +1,16 @@
+{
+  "mode": "strict",
+  "airportUrl": "https://你的机场订阅地址",
+  "residential": {
+    "server": "你的住宅IP",
+    "port": 1080,
+    "username": "用户名",
+    "password": "密码"
+  },
+  "mixedPort": 7890,
+  "controllerPort": 9090,
+  "secret": "换成一个随机字符串",
+  "homeRegion": "CN",
+  "tunEnabled": false,
+  "mihomoPath": "D:\\tools\\早期实现\\resources\\mihomo.exe"
+}

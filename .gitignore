@@ -1,0 +1,33 @@
+# 依赖
+node_modules/
+
+# TypeScript / Vite 编译产物
+dist/
+gui/dist/
+
+# .NET 构建输出（GuardFilter）—— 注意只限 native/，
+# 根目录的 bin/ 是 CLI 源码，必须入库
+native/**/bin/
+native/**/obj/
+
+# 打包产物 —— 均可用 npm run desktop:dist 重建
+release/
+release-*/
+AI Guard/
+
+# 第三方运行时：scripts/prepare-desktop.mjs 从本机暂存到这里
+vendor/
+
+# 旧 Tauri 实现
+gui/src-tauri/target/
+
+# 本机个人配置与运行日志
+config/settings.json
+*.log
+
+# 临时 / 诊断脚本
+tmp-*
+
+# 编辑器
+.vscode/
+.idea/

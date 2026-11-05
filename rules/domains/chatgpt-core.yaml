@@ -1,0 +1,8 @@
+# ChatGPT 主链路
+# 注意: cloudflare.com 兜底由 builder 在严格模式下追加, 不在此文件内
+payload:
+  - DOMAIN-SUFFIX,chatgpt.com
+  - DOMAIN-SUFFIX,openai.com
+  - DOMAIN-SUFFIX,oaistatic.com
+  - DOMAIN-SUFFIX,oaiusercontent.com
+  - DOMAIN-SUFFIX,chat.com

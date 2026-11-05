@@ -1,0 +1,31 @@
+{
+  "name": "aiguard",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "desktop:build": "npm run build && npm --prefix gui run build",
+    "desktop": "npm run desktop:build && node scripts/launch-desktop.cjs",
+    "desktop:prepare": "node scripts/prepare-desktop.mjs",
+    "desktop:pack": "npm run desktop:build && npm run desktop:prepare && electron-builder --dir --win --x64",
+    "desktop:dist": "npm run desktop:build && npm run desktop:prepare && electron-builder --win nsis --x64",
+    "desktop:smoke": "node scripts/desktop-smoke.cjs"
+  },
+  "main": "desktop/main.cjs",
+  "description": "AI Guard Windows network desktop client",
+  "author": "AI Guard",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

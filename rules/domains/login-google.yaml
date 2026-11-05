@@ -1,0 +1,3 @@
+payload:
+  - DOMAIN,accounts.google.com
+  - DOMAIN,oauth2.googleapis.com

@@ -1,0 +1,9 @@
+# gemini-core.yaml · Gemini 与 Google AI Studio 主链路
+payload:
+  - DOMAIN,gemini.google.com
+  - DOMAIN-SUFFIX,gemini.google
+  - DOMAIN,bard.google.com
+  - DOMAIN,aistudio.google.com
+  - DOMAIN,makersuite.google.com
+  - DOMAIN,alkalimakersuite-pa.clients6.google.com
+  - DOMAIN,generativelanguage.googleapis.com

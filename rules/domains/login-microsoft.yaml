@@ -1,0 +1,6 @@
+payload:
+  - DOMAIN,login.microsoftonline.com
+  - DOMAIN,login.live.com
+  - DOMAIN,signup.live.com
+  - DOMAIN,account.live.com
+  - DOMAIN,account.microsoft.com

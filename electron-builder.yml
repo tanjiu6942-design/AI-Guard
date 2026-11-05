@@ -1,0 +1,35 @@
+appId: com.aiguard.desktop
+productName: AI Guard
+directories:
+  output: release
+asar: true
+files:
+  - desktop/**/*
+  - dist/core/**/*
+  - gui/dist/**/*
+  - gui/src-tauri/icons/icon.ico
+  - gui/src-tauri/icons/icon.png
+  - rules/**/*
+  - package.json
+extraResources:
+  - from: vendor/mihomo
+    to: mihomo
+  - from: vendor/guard-filter
+    to: guard-filter
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: gui/src-tauri/icons/icon.png
+  requestedExecutionLevel: asInvoker
+  signAndEditExecutable: true
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: AI Guard
+  deleteAppDataOnUninstall: false
+  artifactName: AI-Guard-Setup-${version}-${arch}.${ext}

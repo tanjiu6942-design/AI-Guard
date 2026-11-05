@@ -1,0 +1,120 @@
+{
+  "at": "2026-11-03T07:26:09.897Z",
+  "durationMs": 35659,
+  "corePid": 55396,
+  "mode": "strict",
+  "tunEnabled": true,
+  "doctor": {
+    "status": "fulfilled",
+    "value": [
+      {
+        "key": "exit",
+        "title": "出口一致性",
+        "state": "ok",
+        "detail": "全部一致: [IP]"
+      },
+      {
+        "key": "dns",
+        "title": "DNS 泄漏",
+        "state": "ok",
+        "detail": "网卡 DNS 已全部接管 ([IP] / [IPv6])"
+      },
+      {
+        "key": "ipv6",
+        "title": "IPv6 防泄漏",
+        "state": "ok",
+        "detail": "IPv6 已被隧道接管 (TUN 有 IPv6 地址, ::/0 路由指向 Meta)"
+      },
+      {
+        "key": "webrtc",
+        "title": "WebRTC 防泄漏",
+        "state": "ok",
+        "detail": "STUN 探测被拦截 (UDP 3478/5349/19302-19309 已 REJECT), WebRTC 拿不到真实 IP"
+      },
+      {
+        "key": "long",
+        "title": "长连接稳定性",
+        "state": "ok",
+        "detail": "保持 31.6s 未断, 满足 ChatGPT 流式回复需求"
+      },
+      {
+        "key": "conflict",
+        "title": "代理冲突",
+        "state": "ok",
+        "detail": "未检测到其他代理客户端 (仅 AI Guard 自身内核在运行)"
+      }
+    ]
+  },
+  "exitSamples": {
+    "status": "fulfilled",
+    "value": [
+      {
+        "status": 200,
+        "ip": "[IP]",
+        "country": "US"
+      },
+      {
+        "status": 200,
+        "ip": "[IP]",
+        "country": "US"
+      },
+      {
+        "status": 200,
+        "ip": "[IP]",
+        "country": "US"
+      }
+    ]
+  },
+  "tunProbe": {
+    "status": "fulfilled",
+    "value": {
+      "status": 200,
+      "trace": "fl=16f1283\nh=www.cloudflare.com\nip=[IP]\nts=1793690736.000\nvisit_scheme=https\nuag=node\ncolo=IAD\nsliver=005-tier1\nhttp=http/1.1\nloc=US\ntls=TLSv1.3\nsni=plaintext\nwarp=off\ngateway=off\nrbi=off\nkex=X25519MLKEM768\n"
+    }
+  },
+  "dns": {
+    "status": "fulfilled",
+    "value": [
+      {
+        "iface": "WLAN",
+        "family": 4,
+        "servers": [
+          "[IP]"
+        ]
+      },
+      {
+        "iface": "WLAN",
+        "family": 6,
+        "servers": [
+          "[IPv6]"
+        ]
+      }
+    ]
+  },
+  "ipv6": {
+    "status": "fulfilled",
+    "value": {
+      "physicalPublic": [
+        {
+          "iface": "WLAN",
+          "addr": "[IPv6]"
+        },
+        {
+          "iface": "WLAN",
+          "addr": "[IPv6]"
+        }
+      ],
+      "tunHasIpv6": true,
+      "ipv6DefaultRoutes": [
+        "Meta",
+        "WLAN"
+      ],
+      "tunAlias": "Meta"
+    }
+  },
+  "consistency": {
+    "explicitProxySuccesses": 3,
+    "distinctProxyIps": 1,
+    "tunMatchesProxy": true
+  }
+}
