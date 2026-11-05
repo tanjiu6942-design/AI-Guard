@@ -26,6 +26,7 @@ ChatGPT / Claude / Gemini 防封工具。保证主流 AI 服务（OpenAI / Anthr
 | 开机即报 5 项体检失败（TUN 接管 / 出口一致性 / WebRTC / 长连接同时失败） | 多为内核未能拉取机场订阅导致（见 `PROJECT_NOTES.md` 坑 15）。检查 `%APPDATA%\aiguard\mihomo\desktop.log` 里是否有 `airport-sub ... EOF` 或 `provider airport-sub error`。 |
 | 体检显示「未知」 | 表示**无法判断**（探测端点不可达），不是「检测到不安全」。此时不会触发断流；链路恢复后自动复检通过。 |
 | 订阅打不开但浏览器正常 | 订阅与公共 DNS 走直连（信源流量必须直连才能启动内核），AI 业务流量仍全部走住宅独享 IP。 |
+| 校园网 / 酒店网：一开保护就整个没网，连认证页都打不开 | 这类网络要先做网页认证。现在启动前会做一次裸网络预检，**未认证时直接拒绝启动**并在界面提示认证地址，不接管 DNS、不改路由、不装防火墙规则。确认网络正常却被误拦时，设 `AIGUARD_SKIP_PREFLIGHT=1` 后重启软件跳过检查。 |
 | 住宅 IP 检测报 `fail` | `residential.server` 应填住宅 IP（不是域名）。填域名时该项会判为「未知」而非失败。 |
 
 沿用 `%APPDATA%\aiguard\settings.json`，不会覆盖现有个人配置。内核路径留空使用随包内核。桌面版日志为 `%APPDATA%\aiguard\mihomo\desktop.log`，DNS 备份为 `desktop-dns-backup.json`，与 CLI 的备份分开。

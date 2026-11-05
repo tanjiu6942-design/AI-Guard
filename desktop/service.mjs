@@ -6,6 +6,7 @@ import { loadRuleSets } from "../dist/core/domain/rule-source.js";
 import { analyzeLog } from "../dist/core/domain/patcher.js";
 import { runDoctor } from "../dist/core/doctor/index.js";
 import { validateSettings, requireConnection } from "./settings.mjs";
+import { ensureNetworkReady } from "./preflight.mjs";
 import { proxyFetch } from "./network.mjs";
 import * as probes from "./probes.mjs";
 import { TimezoneManager } from './timezone.mjs';
@@ -118,6 +119,8 @@ export class DesktopService {
       }
       case "start":
         requireConnection(s);
+        // 在提权之前拦住未认证网络：见 preflight.mjs 顶部注释里那条死锁。
+        await ensureNetworkReady();
         this.nextProbe = 0;
         return this.worker.start(s);
       case "stop":
@@ -128,6 +131,7 @@ export class DesktopService {
         if (!this.worker.running) {
           requireConnection(s);
           if (s.realtimeProtection === false) throw Error('请先退出遗留断流，再启用实时保护与 TUN');
+          await ensureNetworkReady();
           await this.worker.start(s);
         }
         return this.worker.resumeProtection();
