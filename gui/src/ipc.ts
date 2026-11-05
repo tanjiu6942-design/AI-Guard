@@ -14,6 +14,7 @@ export interface Settings {
   homeRegion: string;
   tunEnabled: boolean;
   realtimeProtection?: boolean;
+  takeoverDns?: boolean;
   mihomoPath: string;
 }
 export interface ProtectionStatus {

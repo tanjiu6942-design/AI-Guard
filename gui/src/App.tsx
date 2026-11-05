@@ -795,6 +795,18 @@ export default function App() {
                       onChange={(e) => patch("tunEnabled", e.target.checked)}
                     />
                   </label>
+                  <label className="switch-row">
+                    <div>
+                      <strong>修改物理网卡 DNS</strong>
+                      <span>将网卡 DNS 修改为 198.18.0.2。校园网等有 DNS 防篡改检测的网络请关闭（TUN 仍会在内核层自动劫持 DNS 防泄漏）。</span>
+                    </div>
+                    <input
+                      aria-label="修改物理网卡 DNS"
+                      type="checkbox"
+                      checked={settings.takeoverDns !== false}
+                      onChange={(e) => patch("takeoverDns", e.target.checked)}
+                    />
+                  </label>
                   {settings.realtimeProtection !== false && !settings.tunEnabled && (
                     <p className="hint form-lock">
                       实时保护需要先启用 TUN 模式，才能保存并启动。

@@ -12,7 +12,7 @@ export class KernelSession {
     this.queue = result.catch(() => {});
     return result;
   }
-  start(tun) {
+  start(tun, takeoverDns = true) {
     return this.serial(async () => {
       if (this.running) return;
       try {
@@ -22,7 +22,7 @@ export class KernelSession {
           void this.stop().catch((e) => this.deps.onError?.(e));
         });
         await this.deps.ready(this.child);
-        if (tun) {
+        if (tun && takeoverDns) {
           this.dnsTaken = true;
           await this.deps.applyDns();
         }

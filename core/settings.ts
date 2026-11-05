@@ -13,6 +13,7 @@ export interface Settings {
   homeRegion: string;
   tunEnabled: boolean;
   realtimeProtection?: boolean;
+  takeoverDns?: boolean;
   mihomoPath: string;
 }
 
@@ -27,6 +28,7 @@ export function defaultSettings(): Settings {
     homeRegion: 'CN',
     tunEnabled: false,   // 并行验证期默认不开 TUN
     realtimeProtection: true,
+    takeoverDns: true,
     mihomoPath: '',
   };
 }

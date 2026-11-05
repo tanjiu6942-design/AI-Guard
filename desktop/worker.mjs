@@ -343,7 +343,7 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
           let result = null;
           if (msg.method === "start") {
             settings = msg.payload;
-            await session.start(settings.tunEnabled);
+            await session.start(settings.tunEnabled, settings.takeoverDns !== false);
             try { await ordinaryNodes.restore(); }
             catch { log('无法恢复上次普通节点选择，使用内核当前选择'); }
             await protection?.activate(rawChild.pid);
