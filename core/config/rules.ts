@@ -116,7 +116,19 @@ export function buildRules(mode: Mode, sets: Record<string, string[]>): string[]
     for (const r of list) aiRules.push(`${r},${G_AI}`);
   }
 
-  if (mode === 'strict') {
+  /**
+   * Cloudflare 兜底在 strict 与 precise 下都启用。
+   *
+   * 原实现只在 strict 里有，precise 的设计意图是"仅 AI 主域名走住宅"，
+   * 但实测踩过：precise 下 a.nel.cloudflare.com 落到 MATCH 走机场 IP，
+   * 而 ChatGPT 的遥测/挑战正是走这个域名 —— 出口一跳变，界面立刻无限
+   * "Reconnecting... waiting for network"。这是立项时的原始 bug。
+   *
+   * 兜底只覆盖 cloudflare.com / cloudflare-dns.com 两个后缀，范围极小，
+   * 不会破坏 precise"尽力省流量"的初衷，但能兜住这类未列入规则集的
+   * Cloudflare 子域。global 本来就把一切都送住宅，无需重复添加。
+   */
+  if (mode === 'strict' || mode === 'precise') {
     for (const r of CLOUDFLARE_CATCH_ALL) aiRules.push(`${r},${G_AI}`);
   }
 

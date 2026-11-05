@@ -666,6 +666,35 @@ buildSourceRules(cfg["proxy-providers"]?.["airport-sub"]?.url ?? "")
 结论：**AI 域名的防封能力一点没变**；变化的只是国内流量不再伪装成 DoH 隐藏，
 而是如实交给系统解析 —— 这既符合校园网合规要求，也避免了跨境隧道被国内解析冲垮。
 
+
+---
+
+### 坑 25：precise 模式丢失 Cloudflare 兜底，重现立项时的原始 bug
+
+**现象**（规则审计发现，非运行时踩到）：
+
+`DOMAIN-SUFFIX,cloudflare.com` 兜底规则只在 strict 模式下生成，precise 模式没有。
+
+```
+a.nel.cloudflare.com
+  global  -> AI Guard 专用  OK
+  strict  -> AI Guard 专用  OK（有兜底）
+  precise -> 普通代理       BAD（走机场 IP）
+```
+
+**为什么是 bug**：`a.nel.cloudflare.com` 是 Cloudflare 的遥测上报域名，ChatGPT 首次加载就会请求它。它不在任何 AI 规则集里，只能靠 `cloudflare.com` 后缀兜底捕获。走机场 IP 会让出口从住宅跳到机场 —— 这正是立项时的原始 bug：实测 13 次走机场、3 次走住宅，ChatGPT 界面反复 `Reconnecting...`。
+
+**为什么之前没被发现**：
+- 测试里有一条 `it("精确模式不含 cloudflare 兜底规则")`，**明确把错误行为断言成了正确行为**。
+- `core/config/types.ts` 的注释写着"precise: 仅 AI 主域名走住宅 IP, 其余走机场"，存在设计上的取舍依据。
+- 你当前用 global 模式，`MATCH` 兜底恰好把一切送进住宅，掩盖了这个问题。
+
+**修复**：`CLOUDFLARE_CATCH_ALL` 改为 strict + precise 都启用。
+
+兜底范围只有两个后缀（`cloudflare.com` / `cloudflare-dns.com`），不会破坏 precise "尽力省流量" 的初衷，但能兜住这类未列入规则集的 Cloudflare 子域。global 本来就把一切送住宅，无需重复添加。
+
+**教训**：**测试断言的"正确性"需要定期复核**。一条 `not.toContain` 的断言把一个真实 bug 锁死了很久 —— 测试只证明"代码和预期一致"，不证明"预期本身是对的"。当注释里出现"仅…其余走…"这类刻意收窄的设计时，要追问：收窄掉的那部分流量，是不是恰好包含关键链路？
+
 ---
 
 ## 六、当前软件状态
@@ -700,6 +729,7 @@ buildSourceRules(cfg["proxy-providers"]?.["airport-sub"]?.url ?? "")
 | 离线节点缓存预注入 | ✓ 将 AppData 节点缓存拷入隔离私有运行目录，校园网阻断订阅拉取时依然有 46 个节点可用（坑 21） |
 | 国内 DoH 纯净直连 | ✓ `doh.pub` 等国内 DNS 走 `DIRECT`，彻底消除 SOCKS5 隧道拥塞断开（坑 22） |
 | 国内域名走系统直连解析 | ✓ `geosite:cn` 改为 `system#DIRECT` + `223.5.5.5` 回退，不再经国内 DoH 递归到运营商（坑 24） |
+| precise 模式 Cloudflare 兜底 | ✓ strict + precise 均启用 `cloudflare.com` 兜底，杜绝 `a.nel.cloudflare.com` 走机场导致无限重连（坑 25） |
 | 前置节点稳定不抖 | ✓ 前置组不再跟随 url-test 自动切换，杜绝住宅 dialer-proxy 重建掐断 TLS（坑 23） |
 | 探针超时抗排队 | ✓ 跨境排队实测可达 10s，探针超时放宽到 25s，不再误判为断开（坑 23） |
 | 自测自适应降频 | ✓ 健康时 full 180s / exit 45s，异常时回到 60s / 15s，把通道让给业务流量（坑 23） |
@@ -765,6 +795,8 @@ buildSourceRules(cfg["proxy-providers"]?.["airport-sub"]?.url ?? "")
 17. **安全客户端的自测流量本身就是成本**。一条 30 秒长连接探测就占掉一条跨境通道，固定高频自测等于拿业务带宽换安全感（坑 23）。
 
 18. **"用国内 DoH"不等于"不泄漏"**。DoH 只加密第一跳，递归出口仍是运营商，检测站照样看到中国 DNS（坑 24）。要么国内域名走系统直连（承认合规），要么全走住宅链路（拖垮跨境隧道）—— 必须按域名分流。
+
+19. **测试断言也可能锁死 bug**。一条 `not.toContain` 把 precise 缺 Cloudflare 兜底的真实问题断言成了"正确"（坑 25）。测试只证明代码符合预期，不证明预期本身对。
 
 ---
 

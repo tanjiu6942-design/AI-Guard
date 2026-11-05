@@ -1,7 +1,8 @@
 /**
  * 分流模式:
  * - strict  严格: AI 域名 + Cloudflare 全家桶走住宅 IP, 其余走机场
- * - precise 精确: 仅 AI 主域名走住宅 IP, 其余走机场
+ * - precise 精确: 仅 AI 主域名 + Cloudflare 兜底走住宅 IP, 其余走机场
+ *   (Cloudflare 兜底是必须的: a.nel.cloudflare.com 走机场会导致 ChatGPT 无限重连)
  * - global  全局: 除内网与国内站点外, 全部走住宅 IP(流量消耗最大, 出口最统一)
  */
 export type Mode = 'strict' | 'precise' | 'global';

@@ -20,9 +20,20 @@ describe('buildRules', () => {
     expect(rules).toContain('DOMAIN-SUFFIX,cloudflare.com,AI Guard 专用');
   });
 
-  it('精确模式不含 cloudflare.com 兜底规则', () => {
+  it('精确模式也包含 cloudflare.com 兜底规则', () => {
+    // 实测踩过：precise 下 a.nel.cloudflare.com 落到 MATCH 走机场 IP，
+    // 而 ChatGPT 的遥测/挑战正走这个域名，出口一跳变界面就无限重连。
+    // 兜底只覆盖 cloudflare.com / cloudflare-dns.com 两个后缀，范围极小。
     const rules = buildRules('precise', sets);
-    expect(rules).not.toContain('DOMAIN-SUFFIX,cloudflare.com,AI Guard 专用');
+    expect(rules).toContain('DOMAIN-SUFFIX,cloudflare.com,AI Guard 专用');
+    expect(rules).toContain('DOMAIN-SUFFIX,cloudflare-dns.com,AI Guard 专用');
+  });
+
+  it('精确模式仍保持省流量：非 Cloudflare 的普通域名走机场', () => {
+    const rules = buildRules('precise', sets);
+    // 兜底规则不应把通用域名也拉进住宅
+    expect(rules).not.toContain('DOMAIN-SUFFIX,com,AI Guard 专用');
+    expect(rules[rules.length - 1]).toBe('MATCH,普通代理');
   });
 
   it('两种模式都包含 AI 主链路', () => {

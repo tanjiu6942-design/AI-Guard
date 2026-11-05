@@ -54,9 +54,12 @@ describe('配置组装', () => {
     expect(c.rules).toContain('DOMAIN-SUFFIX,cloudflare.com,AI Guard 专用');
   });
 
-  it('精确模式不含 cloudflare 兜底', () => {
+  it('精确模式也含 cloudflare 兜底（a.nel.cloudflare.com 走机场会导致 ChatGPT 无限重连）', () => {
     const c = buildConfig({ ...baseOpts, mode: 'precise' });
-    expect(c.rules).not.toContain('DOMAIN-SUFFIX,cloudflare.com,AI Guard 专用');
+    expect(c.rules).toContain('DOMAIN-SUFFIX,cloudflare.com,AI Guard 专用');
+    expect(c.rules).toContain('DOMAIN-SUFFIX,cloudflare-dns.com,AI Guard 专用');
+    // 兜底不应把通用域名也拉进住宅，precise 仍走机场兜底
+    expect(c.rules[c.rules.length - 1]).toBe('MATCH,普通代理');
   });
 
   it('profile 保留 selected 与 fake-ip', () => {
