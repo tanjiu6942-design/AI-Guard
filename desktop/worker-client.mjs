@@ -1,7 +1,7 @@
 import { createServer } from "node:net";
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WindowsGuard } from './firewall.mjs';
 import { emptyProtection, readProtectionState } from './worker-protection.mjs';
@@ -14,8 +14,8 @@ export function needsElevation(settings, dataDir) {
 }
 
 export class WorkerClient {
-  constructor({ executable, args = [], root, cwd = root, dataDir, resources, guard }) {
-    Object.assign(this, { executable, args, root, cwd, dataDir, resources, guard });
+  constructor({ executable, args = [], root, cwd = root, dataDir, resources, guard, elevation }) {
+    Object.assign(this, { executable, args, root, cwd, dataDir, resources, guard, elevation });
     this.phase = "stopped";
     this.running = false;
     this.pending = new Map();
@@ -284,18 +284,69 @@ export class WorkerClient {
    * 而那一刻 TUN 尚未就绪 -> 判 fail -> 又一次整机断流 -> 界面回到"已断流"。
    * 用户点一次按钮, 状态原地踏步, 永远解不开。
    *
-   * 正确做法: 内核不在了就只清理本进程的状态(锁标记 / 状态文件),
-   * 让界面回到可启动状态; 需要重新联网时用户再点"启动内核"。
+   * 但"不重启内核"不等于"不需要解除锁定" —— 这两件事曾被混为一谈,
+   * 直接造成了 2026-11-06 的事故: 内核与 worker 都已退出, WFP 里 4 条
+   * Persistent 规则仍然生效(filterCount=4), 而这里只把内存状态刷成 off,
+   * 界面显示"已恢复"、网络却全断。用户点了很多次都无效, 最后只能还原系统。
+   *
+   * 所以: worker 活着 -> 由 worker 执行 unlock; worker 死了 ->
+   * **主进程自己直接调 guard 解除 WFP**, 不依赖任何已退出的进程。
    */
-  async recover(settings) {
+  async recover(settings, { resetOnly = false } = {}) {
     if (this.socket || this.startPromise) return this.stop({ releaseProtection: true });
+    const guard = this.guardForRecovery();
+    if (!resetOnly) {
+      // 先读真实锁态: WFP 是独立于本进程的内核态对象, 只有它说了算。
+      let native;
+      try { native = await guard.status(); }
+      catch (e) {
+        // 读不到真实状态就不能谎称已恢复。
+        this.protection = { ...emptyProtection(), phase: 'lock_failed', error: `无法确认系统断流状态：${e.message}` };
+        this.onProtection?.(this.protection);
+        throw Error(`无法确认系统断流状态：${e.message}`);
+      }
+      if (native.locked) {
+        try {
+          /**
+           * worker 活着 -> 它本身就是提权进程，直接 unlock 不弹 UAC。
+           * worker 已死  -> 主进程是 asInvoker，必须经 UAC 提权才能解除
+           *                 （实测普通权限 unlock 直接 exit 1）。
+           */
+          if (this.socket) await guard.unlock();
+          else await guard.unlockEscalated();
+        }
+        catch (e) {
+          // 解锁失败必须把"仍锁着"如实反映到界面, 并抛给调用方。
+          this.protection = { ...emptyProtection(), phase: 'lock_failed', reason: '系统断流仍未解除', error: e.message };
+          this.onProtection?.(this.protection);
+          throw Error(`解除系统断流失败：${e.message}`);
+        }
+        // unlock 内部会回读 status 校验, 这里再确认一次, 避免"以为解了其实没解"。
+        const after = await guard.status();
+        if (after.locked) {
+          this.protection = { ...emptyProtection(), phase: 'lock_failed', reason: '系统断流仍未解除', error: '解锁后系统断流依然生效' };
+          this.onProtection?.(this.protection);
+          throw Error('解除系统断流失败：解锁后系统断流依然生效');
+        }
+      }
+    }
     // 内核与提权 worker 都已退出: 本地直接复位, 不重启内核。
     this.running = false;
     this.phase = "stopped";
     this.corePid = null;
     this.error = null;
     this.protection = emptyProtection();
+    try {
+      writeFileSync(join(this.dataDir, 'protection-state.json'), JSON.stringify(this.protection, null, 2));
+    } catch { /* 状态文件写不了不影响解锁结果 */ }
     this.onProtection?.(this.protection);
     return this.protection;
+  }
+  guardForRecovery() {
+    return this.guard || (this.guard = new WindowsGuard({
+      executable: join(this.resources, 'guard-filter', 'aiguard-guard-filter.exe'),
+      dataDir: this.dataDir,
+      elevation: this.elevation,
+    }));
   }
 }

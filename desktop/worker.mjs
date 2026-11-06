@@ -121,7 +121,21 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
         // (实测: 00:41:49 重载 -> 同一秒断流)。
         protection?.notifyReload();
       } catch (e) {
-        if (blocked && systemBlockConfirmed) rawChild?.kill();
+        /**
+         * 配置热重载失败时**绝不杀内核**。
+         *
+         * 原来的写法: 在 blocked 且 systemBlockConfirmed 为真时杀掉内核。
+         * 现场(2026-11-06 07:05:13): 三个探针全部 fetch failed -> configure 失败 ->
+         * 这里 kill 掉内核 -> 紧接着 "触发断流: 内核意外退出", 而 WFP 的 4 条
+         * Persistent 规则(filterCount=4)依然生效。
+         *
+         * WFP 规则的条件是 "APP_ID != 内核 -> BLOCK"。内核一死, 除一个不存在的
+         * 进程之外**所有应用**都被内核态挡死: WiFi 连着没网、蓝牙网络共享建不起来,
+         * 重启也不恢复。而内核活着时至少 worker 还能被重新拉起去 unlock。
+         *
+         * 所以: 失败就如实报错, 由保护状态机决定是继续保持隔离还是解除。
+         * 隔离的正确手段是 WFP 规则(已经在生效), 不是杀掉唯一的出网通道。
+         */
         throw e;
       } finally { unlinkSync(candidate); }
     });
@@ -448,10 +462,27 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
                     'Basic ' + Buffer.from(`aiguard-health:${probeSecret}`).toString('base64'),
                   )
               : (url) => proxyFetch(settings.mixedPort, url, AI_ROUTE_TIMEOUT);
+            /**
+             * 「独享 IP」需要一个**独立的**出口预期才能核对。
+             *
+             * 原来这里写死 `expectedEgressIp: null`，于是 ai-route-report 走
+             * "未提供真实出口预期，无法核对独享性" 分支，这一项永远显示「未知」——
+             * 不管出口多正确。实测用户为此困惑。
+             *
+             * 原意图是防"residential.server 填的是 SOCKS 网关地址、不是最终出口"。
+             * 但同一个字段在 service.mjs（CLI 体检）和 health.mjs（实时保护）
+             * 都被当作出口预期使用，README 也明确写着"应填住宅 IP（不是域名）"。
+             * 只有这里不信任它，属于不一致而非设计。
+             *
+             * 折中做法：**只在它是 IPv4 字面量时**才当作预期。
+             * 填域名/留空时仍传 null，保持"无法核对"而不误报 fail。
+             */
+            const residentialServer = String(settings.residential?.server ?? '').trim();
+            const residentialIsIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(residentialServer);
             result = await runAiRouteChecks({
               fetchFn,
-              expectedIp: settings.residential?.server ?? '',
-              expectedEgressIp: null,
+              expectedIp: residentialServer,
+              expectedEgressIp: residentialIsIp ? residentialServer : null,
               controllerGet,
             });
           } else if (msg.method === "reload") {

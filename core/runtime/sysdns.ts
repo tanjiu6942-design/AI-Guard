@@ -51,6 +51,10 @@ export function buildListScript(): string {
  *
  * 早期确实出现过 DNS 混族导致 MediaTek 网卡驱动蓝屏(0x50), 但那是因为
  * 当时把 v4/v6 写进了同一个地址族。自动归类不会产生这个问题。
+ *
+ * 注: `ipv6` 形参当前**不参与**脚本生成 —— 物理网卡只接管 IPv4(见下方),
+ * 保留形参只为兼容既有调用方(worker 仍传 true)。不要因为看到 true 就以为
+ * 网卡上会被写入 v6 DNS。
  */
 export function buildApplyScript(ipv6: boolean): string {
   // 对齐商用客户端成熟方案：物理网卡只接管 IPv4 的 198.18.0.2，IPv6 留空不注入虚拟地址。

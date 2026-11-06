@@ -91,7 +91,20 @@ export function pickPortalUrl(results) {
 }
 
 /** 纯函数：把探测结果归类成放行/拦截。便于单测，不依赖网络。 */
-export function classify(results) {
+export function classify(results, { selfLocked = false } = {}) {
+  /**
+   * 已知本机被 AI Guard 自己的 WFP 规则锁着时，必须放行。
+   *
+   * 否则形成无解死锁：三个探测端点全部不可达（因为规则把除内核外的一切挡死了）
+   * → 判 NO_NETWORK 拒绝启动 → 而解除规则只能靠内核/worker 活着时执行。
+   * 实测(2026-11-06)用户被彻底锁死，最后只能还原系统。
+   *
+   * 这条前置门要防的是「外部网络还没准备好」，不是「我们自己的规则把网掐了」。
+   * 后者应当先让 worker 起来把它解开 —— 而它自己的探测走受保护探测端口，不需要裸网。
+   */
+  if (selfLocked) {
+    return { ok: true, code: null, portalUrl: null, results, selfLockedBypass: true };
+  }
   const portal = results.find((r) => r.verdict === "portal");
   if (portal) {
     return { ok: false, code: "CAPTIVE_PORTAL", portalUrl: pickPortalUrl(results), results };
@@ -104,7 +117,7 @@ export function classify(results) {
 
 export async function checkNetworkReady(opts = {}) {
   const results = await Promise.all(PROBES.map((probe) => probeOne(probe, opts)));
-  return classify(results);
+  return classify(results, { selfLocked: opts.selfLocked === true });
 }
 
 const SKIP_HINT = "（若确认网络本来就正常，可设置环境变量 " + SKIP_ENV + "=1 后重启软件跳过本检查。）";
@@ -112,6 +125,14 @@ const SKIP_HINT = "（若确认网络本来就正常，可设置环境变量 " +
 /** 把拦截结果转成给用户看的话。这句话会直接出现在界面顶部的提示条里。 */
 export function describeBlocker(result) {
   const lines = [];
+  if (result.selfLockedBypass) {
+    // 这里返回的是"说明"而不是"拦截语": 调用方拿到自锁放行时用它提示用户。
+    lines.push("检测到本软件上次留下的整机断流规则仍在生效。");
+    lines.push("");
+    lines.push("本次启动会先解除该规则再接管网络；否则会形成「要解锁必须先出网、");
+    lines.push("要出网必须先解锁」的死锁。");
+    return lines.join("\n");
+  }
   if (result.code === "CAPTIVE_PORTAL") {
     lines.push("当前网络需要网页认证且尚未完成，已拒绝启动。");
     lines.push("");

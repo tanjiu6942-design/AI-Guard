@@ -231,7 +231,23 @@ $processes = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'cl
 export function createHealthChecker({ settings, controller, probePort, corePid,
   systemSnapshot = readProtectionSnapshot, fetchFn = url => proxyFetch(probePort, url),
   stun = stunProbe, long = longConnProbe(probePort, 30000), inStartupGrace = () => false, getDnsConfig }) {
-  let baseline = null;
+  /**
+   * 配置里声明的住宅独享 IP。
+   *
+   * 必须校验它 —— 否则「出口一致性」只证明三个探针互相一致，
+   * 却完全不证明这个出口是你的住宅 IP。住宅 SOCKS5 挂掉、流量回落到机场时，
+   * 三个探针会**一致地**报告机场 IP，判 ok 并显示全绿，
+   * 而用户此刻正以机场 IP 访问 Claude —— 正是本工具要防的封号场景。
+   *
+   * `baseline` 只有内存、重启即归零，所以"重启后第一次观测"必须锚定到配置值，
+   * 不能把重启后看到的第一个 IP 当成正确基线。
+   *
+   * 只在配置确实是 IPv4 字面量时启用（填域名/留空时无法比对，保持原有行为）。
+   */
+  const expectedIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(String(settings?.residential?.server ?? '').trim())
+    ? String(settings.residential.server).trim()
+    : null;
+  let baseline = expectedIp;
   /**
    * 出口一致性探测端点。
    *
@@ -288,6 +304,15 @@ export function createHealthChecker({ settings, controller, probePort, corePid,
     const found = results.map(r => r.ip).filter(Boolean);
     if (!found.length) return item('exit', '出口一致性', 'unknown', `所有受保护公共探测端点均未响应（${errors.join('；')}）`, false);
     if (new Set(found).size !== 1) return item('exit', '出口一致性', 'fail', '公共探测端点观察到不一致的出口');
+    /**
+     * 与配置的住宅 IP 比对。这一条是封号防线：
+     * 住宅链路失效时流量会回落到机场，三个探针仍然"一致"，但出口已经不是住宅 IP。
+     * 只比"端点之间一致"会把它判成 ok。
+     */
+    if (expectedIp && found[0] !== expectedIp) {
+      return item('exit', '出口一致性', 'fail',
+        `出口是 ${found[0]}，但配置的住宅独享 IP 是 ${expectedIp}（流量可能已回落到机场节点）`);
+    }
     if (baseline && found[0] !== baseline) return item('exit', '出口一致性', 'fail', `实际出口改变：${baseline} → ${found[0]}`);
     if (found.length !== targets.length) return item('exit', '出口一致性', 'warn', `${found.length}/${targets.length} 个端点可验证，尚不能完整确认`, false);
     baseline ??= found[0];

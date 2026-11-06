@@ -33,6 +33,14 @@ export function chunkDnsKeys(keys: string[], maxLen = MAX_KEY_LEN): string[] {
   return out;
 }
 
+/**
+ * 生成 DNS 配置。
+ *
+ * `homeRegion` 目前**不参与**任何策略分支(策略只有"AI/海外 → 住宅加密 DoH"、
+ * "国内 → 国内加密 DoH"、"订阅信源 → 明文直连"三条), 形参保留只为兼容
+ * settings → builder → 这里的既有调用链。真正生效的国别判据在体检侧,
+ * 由 `AIGUARD_EXPECTED_COUNTRY`(默认 US)决定 DNS 泄漏的国家对照。
+ */
 export function buildDns(
   aiRules: string[],
   homeRegion: string,
@@ -60,24 +68,14 @@ export function buildDns(
   }
 
   /**
-   * 国内域名使用系统解析器直连（system#DIRECT），而不是国内 DoH。
-   *
-   * 为什么不能用 223.5.5.5 / doh.pub：这些公共 DoH 只是"第一跳"，它们最终仍会
-   * 向运营商递归服务器要答案，DNS 泄漏检测站看到的出口就是运营商 DNS
-   * （实测报出 112.25.12.136 南京 / 211.138.19.59 广东 / 2409:8088:... 广东移动）。
-   * 换成 system#DIRECT 后，国内查询直接交给操作系统在校园网内的真实 DNS 解析，
-   * 不再经过内核伪造的任何上游 —— 既符合运营商/校园网的合规要求，
-   * 也不会被泄漏检测站误判成"内核把查询送去了境外"。
-   *
-   * 安全性不受影响：+ 国内域名本来就要走 DIRECT，解析结果只用于直连，
-   * 不涉及 AI 域名；AI 与海外域名仍由 nameserver-policy 的其它条目走住宅加密 DNS。
-   */
-  /**
    * 国内域名使用加密 DoH（直连），不用 system#DIRECT。
    *
    * 为什么不用 system#DIRECT：那会把国内域名的解析明文交给本地 ISP 的
    * 递归服务器，运营商能看到你访问的每一个国内站点。实测在热点下解析器
    * 直接暴露为本地联通 DNS（61.163.252.70 / 2408:8001:100:3003::3）。
+   * （曾一度采用 system#DIRECT，理由是"公共 DoH 仍会递归到运营商"——
+   *   该归因是错的，当时机器上还跑着另一个内核 早期实现。
+   *   结论与纠正过程见 PROJECT_NOTES 坑 24。）
    *
    * 用 DoH 后：本地 ISP 只能看到一条到阿里/腾讯的加密 HTTPS 连接，
    * 看不到具体域名。两个 DoH 互为回退，避免单个服务不可用导致解析失败。

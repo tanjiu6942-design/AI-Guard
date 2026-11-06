@@ -241,7 +241,12 @@ bind: Only one usage of each socket address
 
 **这是我十几轮排查走错方向的根源** —— 我以为在测 AI Guard，实际测的是 另一个代理程序。
 
-**修复**：启动前用 `netstat + tasklist` 检测端口占用，被占则自动顺延并告知是谁占了。
+**修复（两条入口行为不同，以代码为准）**：
+- **CLI**（`bin/start.js` 的 `portOwner`）：`netstat -ano` 找 LISTENING 行并反查进程名，
+  混合端口被占则自动顺延（最多试 20 个），控制端口同样顺延，并把实际端口写回 settings。
+- **桌面版**（`desktop/worker.mjs` 启动前）：直接对 `mixedPort` / `controllerPort` 做一次
+  `listen` 探测，被占即抛「端口 N 已被占用，请在配置页修改」——**不顺延**，
+  避免内核悄悄换端口后体检器与界面连错地方。
 
 ---
 
@@ -256,15 +261,30 @@ bind: Only one usage of each socket address
 
 **关键佐证**：你说「用 早期实现 时只是访问不了校园网官网，**没有蓝屏**」。
 
-**根因**：我的 DNS 脚本
+**根因（推断，未最终确认）**：我的 DNS 脚本一次性把 v4/v6 地址写进网卡 DNS 配置
 ```powershell
 Set-DnsClientServerAddress -InterfaceIndex X -ServerAddresses 198.18.0.2,fdfe:dcba:9876::2
 ```
-**没带 `-AddressFamily`**，把 IPv4 和 IPv6 地址**混写进两个地址族**，形成畸形网卡配置。MediaTek MT7921 驱动处理这种状态变更时内存越界。
+形成畸形网卡配置，MediaTek MT7921 驱动处理这种状态变更时内存越界。
 
-**早期实现 为什么不蓝屏**：它的脚本按地址族分开调用。
+⚠️ **此处曾写下"没带 `-AddressFamily` 才混写"的结论，与代码不符**：
+`Set-DnsClientServerAddress` **根本没有 `-AddressFamily` 参数**（可用参数只有
+InterfaceIndex / InterfaceAlias / InputObject / ServerAddresses / Validate /
+ResetServerAddresses）；加上它会报"找不到与参数名称匹配的参数"，而脚本里
+`$ErrorActionPreference = 'SilentlyContinue'` 会把这条错误吞掉，表现为"DNS 一直没接管"。
+v4/v6 地址是 PowerShell 按格式**自动归类**到各自地址族的。详见
+`core/runtime/sysdns.ts` 顶部注释。
 
-**修复**：按族分开，各带 `-AddressFamily`；不接管 IPv6 时主动清理残留。
+**早期实现 为什么不蓝屏**：当时未取到它的脚本做对照，原因不确定。
+
+**现行修复（以代码为准）**：
+1. 物理网卡**只接管 IPv4** `198.18.0.2`，不再注入 v6 虚拟地址
+   （`buildApplyScript(ipv6)` 的 `ipv6` 形参当前不参与脚本生成）。
+2. 退出与启动时用 `buildCleanupResidualDnsScript()` 清理 `198.18.0.2` 及历史遗留的
+   `fdfe:dcba:9876::2` 残留并恢复 DHCP。
+3. `buildRestoreScript()` 先 `-ResetServerAddresses` 再写回原 v4+v6 地址。
+
+**验证状态**：此后未再复现蓝屏，但也没有专门再启 TUN 复测（见第六节「未完成」）。
 
 ---
 
@@ -278,7 +298,12 @@ Set-DnsClientServerAddress -InterfaceIndex X -ServerAddresses 198.18.0.2,fdfe:dc
 
 **修复（已完成）**：`stop` 前主动 `sysdns.restore()`。
 
-**修复（待做）**：加独立看守进程，主进程消失时自动恢复。
+**修复（已完成，替代看守进程）**：提权 worker 与主进程靠命名管道相连，管道断开时
+worker 的 `finish()` 会先做 `stopProtectedSession` 收尾并恢复 DNS；下次启动时
+`restoreDns()` 还会从残留的 `desktop-dns-backup.json` 恢复，并跑一次
+`buildCleanupResidualDnsScript()` 兜底清残留。
+**仍存在的边界**：worker 本身被强杀或系统断电时进程内收尾跑不到，只能在下次启动时
+从备份恢复（且恢复需要 UAC）。
 
 ---
 
@@ -457,12 +482,19 @@ if (abnormal.some(x => x.critical || this.failures.has(x.key))) return this.trip
 而断流后的复检**依赖同一个已经不可用的内核** → 永远 `unknown` → 永远断流。
 **死锁。**
 
-**修复**：
+**修复（现状，见 `desktop/protection.mjs` 的 `run()`）**：
 
-1. `unknown` 只提示、不单独触发断流；明确的 `fail`（检测到泄漏/接管失效）仍然断流
-2. 恢复复检只有 `unknown` 时：**保持断流**（安全语义不变），但标记 `undetermined`
-3. `undetermined` 状态下持续做完整复核，**链路自愈后自动解锁**，
-   用户不必陷入「复检 → 又断流 → 再复检」的循环
+1. 分级处置：`critical`（确认泄漏 / 出口改变 / 网卡 DNS 泄漏）与「采集失败」
+   在**任何阶段**立刻断流；其余异常（包含 `unknown`）单轮只进 `suspect` 并提示，
+   必须**连续两轮**都异常才断流（`persistent = failures 计数 >= 1`）。
+2. 断流后复检不通过：**保持 `locked`**，把原因写进 `reason`；没有额外的中间状态。
+   开启「异常断流后自动复联」（`autoReconnect`，默认开）时，状态机每 15 秒
+   自动重试一次 `resume()`。
+3. 完整通过一轮后清空 `failures`、`retry` 并重置 `everLocked`，
+   避免"断过一次就永久过敏"。用户不必陷入「复检 → 又断流 → 再复检」的循环。
+
+（早期设计里曾有一个 `undetermined` 状态，当前代码没有实现，phase 只有
+`off / checking / healthy / suspect / locking / locked / recovering / lock_failed`。）
 
 **教训**：fail-closed 是对的，但要分清「确认不安全」和「无法确认」。
 把两者混为一谈，系统就失去了自愈能力。
@@ -621,7 +653,7 @@ buildSourceRules(cfg["proxy-providers"]?.["airport-sub"]?.url ?? "")
 
 **教训**：
 
-- **判定层要严，测量层要准**。曾试图放宽 unknown 的判定阈值（连续 3 轮才锁）来止血，但那会破坏 `source-bypass` 契约 —— 只要阻断探测端点就能让出口一致性永远 unknown，形成 fail-open。**正确做法是修测量（超时、抖动、抢占），而不是放松判定**。
+- **判定层要严，测量层要准**。曾试图放宽 unknown 的判定阈值（连续 3 轮才锁）来止血，但那会破坏 `source-bypass` 契约 —— 只要阻断探测端点就能让出口一致性永远 unknown，形成 fail-open。**正确做法是修测量（超时、抖动、抢占），而不是放松判定**。（最终实现是**连续两轮**即锁，见 `desktop/protection.mjs` 的 `persistent` 判定。）
 - **安全客户端的自测流量必须计入成本**。长连接探测占一条跨境通道 30 秒，等于拿业务带宽换安全感；健康时必须降频。
 - **代理链的每一跳都要求稳定**。前置节点是住宅出口的"地基"，地基随便换，上层连接必然被掀翻。
 
@@ -714,6 +746,99 @@ a.nel.cloudflare.com
 
 ---
 
+### 坑 26：整机断网且无法自救 —— 内核死、WFP 规则活、恢复按钮在撒谎
+
+**事故报告（用户实测）**：使用中持续异常、反复断连，最终 WiFi 与 USB 蓝牙网络共享全部无法使用，**只能还原系统**。
+
+这是本项目至今最严重的一次事故，也是唯一一次用户被迫重装。
+
+**现场证据**（`%APPDATA%\aiguard\`，事发当天）：
+
+```json
+// protection-state.json
+{ "phase": "lock_failed",
+  "reason": "管理进程断开，保持系统断流",
+  "error": "Private configuration must be UTF-8 text no larger than 16 MiB；fetch failed" }
+
+// protection-diagnostic.json（同一毫秒）
+{ "controllerAvailable": false,
+  "guard": { "locked": true, "complete": true, "filterCount": 4 } }
+```
+
+`desktop.log` 的时间线：
+
+```
+07:03:47  检测[full] ... exit=unknown long=fail
+          （三个探针全部 "socket disconnected before TLS handshake"）
+07:03:48  [Provider] airport-sub pull error: x509: certificate is not valid for any names
+07:04:08  [TUN] default interface lost by monitor
+07:05:13  mihomo 已退出        ← 内核死了
+07:05:15  触发断流: 管理进程断开，保持系统断流
+07:05:16  guard: { locked: true, filterCount: 4 }   ← 规则还活着
+```
+
+**为什么整机断网**：`native/GuardFilter/Guard.cs` 把这 4 条过滤器标成 `Wfp.Persistent` 并绑定 `BFE` 服务（重启不消失），条件是 `APP_ID != 内核 → BLOCK`。内核一死，**除一个已不存在的进程外，所有应用的出站流量都被内核态拦掉** —— WiFi 显示已连接但没有网，蓝牙网络共享建不起来，重启电脑也无效。
+
+四个缺陷叠加成这条死路：
+
+1. **内核被自己杀掉**（`desktop/worker.mjs` 的 `updateConfig`）
+   `catch` 里写的是 `if (blocked && systemBlockConfirmed) rawChild?.kill()`。探针全超时 → `configure` 失败 → 主动 kill 内核。而此刻 WFP 恰好已经锁上，隔离手段（规则）和唯一的出网通道（内核）同时没了。
+
+2. **"测不出来"被当成"确认泄漏"**（`desktop/protection.mjs`）
+   `collectionFailed || hasCriticalLeak` 立即 `trip()`。而 full 检测含一条 30 秒长连接 + 3 个出口 trace，全走跨境住宅隧道（实测单连接排队可达 10 秒），45 秒硬超时很容易踩中。
+
+3. **管理进程一断就永久保留断流**（`desktop/worker.mjs` 的 `finish()`）
+   `preserve: !intentionalStop`。主进程崩溃 → 保留断流。设计意图是防泄漏，但没考虑"内核已死"时保留断流等于永久断网。
+
+4. **恢复按钮在撒谎**（`desktop/worker-client.mjs` 的 `recover()`）
+   这是最恶劣的一条。worker 已退出时：
+
+   ```js
+   this.running = false;
+   this.protection = emptyProtection();   // 只改内存
+   ```
+
+   从头到尾**没有调用 `guard.unlock()`**。用户点"退出保护并恢复普通网络" → 界面变绿 → 网还是全断。点几次都一样。
+
+**第 5 个隐藏障碍（修复时才发现）**：即使补上 `guard.unlock()` 调用，**在生产环境依然跑不通**。`electron-builder.yml` 里 `requestedExecutionLevel: asInvoker`，而 `native/GuardFilter/Program.cs` 明确：
+
+```csharp
+if (!status) RequireAdministrator();   // unlock 必须管理员
+```
+
+实测：普通权限下 `status` → exit 0，`unlock` → exit 1 `UnauthorizedAccessException`。这才是"以前没人能修"的真正原因 —— unlock 只存在于提权 worker 里，而 worker 已经死了。
+
+**修复**：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `desktop/worker.mjs` | 删掉 kill 内核那句。配置失败只 `throw`，由状态机决定后续。隔离靠 WFP 规则，不靠杀掉唯一出网通道。 |
+| 2 | `desktop/protection.mjs` | 区分三种失败：`critical`（确认泄漏）与「读不到本机状态」立即锁；**探测超时**只记 `suspect`，连续两轮才锁。 |
+| 3 | `desktop/worker-client.mjs` | `recover()` 先读真实锁态；锁着就**真的解锁**；解锁失败如实报错并保持"未解除"，不再刷绿。 |
+| 4 | `desktop/firewall.mjs` | 新增 `unlockEscalated()`，走 UAC 执行 unlock，并回读状态二次确认。 |
+| 5 | `desktop/elevate-guard.mjs` | 新增：`Start-Process -Verb RunAs` 提权执行 guard 命令。 |
+| 6 | `desktop/preflight.mjs` | 启动前置门在「本机被自己锁住」时放行，否则形成"要解锁必须先出网、要出网必须先解锁"的死锁。 |
+| 7 | `vendor/guard-filter/emergency-unlock.cmd` | 改为**自我提权**、有分步提示与失败明示；不再是只打印一句英文的裸脚本。 |
+| 8 | `build/emergency-unlock-shortcut.nsh` + `electron-builder.yml` | 安装时在开始菜单与桌面创建「AI Guard 紧急解除网络锁定」快捷方式。 |
+
+**被修正的旧测试**：`tests/protection.test.js` 里原有一条
+
+```js
+it('a hung check expires into an abnormal result', ... expect(phase).toBe('locked'))
+```
+
+它把"挂起超时立即整机断流"断言成了正确行为 —— 正是这次事故的触发路径。已改为断言首轮只 `suspect`，并在 `tests/collection-failure.test.js` 里补上"连续两轮仍然锁"的 fail-closed 契约。
+
+**教训**：
+
+1. **安全机制不能把"唯一出口"和"唯一救命通道"一起关掉**。fail-closed 关的是**被保护业务**的流量，不是这台机器的全部网络能力。
+2. **"无法确认" ≠ "确认不安全"**。前者是测量问题，后者才是安全判定。把超时当泄漏，等于让网络抖动直接升级成整机断网。
+3. **恢复路径必须有独立的权限通道**。当正常路径（worker）死了，恢复能力不能跟着一起死；而这条备用通道自己也需要提权 —— 这一点在写代码前就该验证，否则修出来的只是"看起来能跑"。
+4. **救命工具必须出现在用户能看见的地方**。`emergency-unlock.cmd` 一直存在，但藏在 `resources/guard-filter/` 深处且要求手动提权，等于不存在。
+5. **持久化内核态规则是最高危险等级的副作用**。它跨重启存活，一旦失去配对的控制面，就变成没人能改的系统状态。这类能力必须配同等级的可逆性设计。
+
+---
+
 ## 六、当前软件状态
 
 ### 已实现且验证通过
@@ -723,14 +848,14 @@ a.nel.cloudflare.com
 | 出口一致性（严格模式） | ✓ 三个 Cloudflare 域名全部 `203.0.113.7` |
 | IP 检测站显示住宅 IP | ✓ ippure.com 显示 4% 极度纯净 |
 | 严格 / 精确 / 全局 三模式 | ✓ 热重载切换，不重启不中断 |
-| DNS 防泄漏（IPv4 + IPv6） | ✓ 网卡 DNS 全部接管 |
+| DNS 防泄漏（IPv4 + IPv6） | ✓ 默认把物理网卡 IPv4 DNS 接管为 `198.18.0.2`；`takeoverDns: false` 时不改网卡，由 TUN 的 `dns-hijack: any:53` 透明劫持。v6 侧不向网卡注入虚拟地址，靠 TUN 兜住 |
 | IPv6 防泄漏 | ✓ TUN 有 IPv6 地址，`::/0` 路由指向 Meta |
 | WebRTC 防泄漏 | ✓ STUN 端口被 REJECT |
 | 长连接稳定性 | ✓ 保持 31.5s 未断 |
 | **原始 bug 修复** | ✓ `a.nel.cloudflare.com` 命中 `cloudflare.com` 兜底 |
 | fail-closed | ✓ 守卫节点 `127.0.0.1:9`，绝不回落直连 |
-| 端口冲突检测 | ✓ 被占自动顺延 |
-| 日志落盘 | ✓ `%APPDATA%\aiguard\mihomo\mihomo.log` |
+| 端口冲突检测 | ✓ CLI 用 `netstat -ano` 检测并自动顺延（≤20 次）；桌面版启动前做 bind 探测，被占直接报错要求改端口 |
+| 日志落盘 | ✓ CLI 写 `%APPDATA%\aiguard\mihomo\mihomo.log`，桌面版写同目录 `desktop.log` |
 | 独享 IP 检测 | ✓ 出口 `203.0.113.7` = 住宅独享 IP |
 | 断网保护检测 | ✓ `AI Guard 专用` 是 Fallback 组且含「未就绪(阻断)」节点 |
 | Claude Code 线路检测 | ✓ 规则与运行时连接链都走 `AI Guard 专用 → AI Guard · 独享 IP` |
@@ -738,7 +863,7 @@ a.nel.cloudflare.com
 | 受保护模式订阅拉取 | ✓ `airport-sub` 走 `proxy: DIRECT`，信源规则在 `MATCH,REJECT` 之前 |
 | 受保护模式出口一致性 | ✓ 真实内核实测 46 个机场节点 + 出口 `203.0.113.7` + 4/4 项 ok |
 | 热重载后信源规则保持 | ✓ 启动与热重载两阶段均实测 4/4 项 ok |
-| 断流死锁修复 | ✓ `unknown` 不再触发断流；原因不明时保持断流并周期复核自愈 |
+| 断流死锁修复 | ✓ `unknown` 不单独触发断流（需连续两轮）；断流后复检仅 `unknown` 时保持 `locked`，由自动复联周期重试直至自愈 |
 | 桌面端打包完整性 | ✓ `guard-filter` 已进 `extraResources`，实时保护可用 |
 | 启动前置门（Preflight） | ✓ 启动前裸探测 Captive Portal，未认证拒绝接管避免死锁（坑 18） |
 | 校园网免改网卡模式 | ✓ `takeoverDns: false` 保持物理网卡 DHCP，由 TUN 内核透明劫持，避免被学校网关断网（坑 19） |
@@ -752,18 +877,18 @@ a.nel.cloudflare.com
 | 自测自适应降频 | ✓ 健康时 full 180s / exit 45s，异常时回到 60s / 15s，把通道让给业务流量（坑 23） |
 | 异常断流自动复联自愈 | ✓ 后台自动复检重试，外网或代理自愈后自动解除断流（无需每次手动点击） |
 | Claude 专项连接即显 | ✓ 首次连接成功后后台静默触发检测，1~2 秒内自动呈现真实通过结果 |
-| 测试 | ✓ 371 个用例（371 passed + 1 skipped，e2e 条件不满足时跳过） |
+| 测试 | ✓ 408 个用例（408 passed + 1 skipped，e2e 条件不满足时跳过） |
 | 规则集完整度 | ✓ 10 个规则集，100% 覆盖 早期实现（含 Gemini / Google 支付） |
 
 ### 未完成 / 已知限制
 
 | 项 | 说明 |
 |---|---|
-| 蓝屏修复未验证 | 需要再启一次 TUN 才能确认，但怕再崩 |
-| DNS 强杀恢复 | 依赖进程正常退出，需加看守进程 |
-| GUI 的 `exitIp` | 一度为 `null`，后来已修（读 settings 真实值） |
+| 蓝屏修复未验证 | 需要再启一次 TUN 才能确认，但怕再崩；现行实现只接管 IPv4、不注入 v6 虚拟地址 |
+| DNS 强杀恢复 | 已由「worker 管道断连收尾 + 下次启动恢复残留备份 + 清理残留脚本」覆盖；worker 被强杀或断电时只能在下次启动恢复（需 UAC） |
+| GUI 的 `exitIp` | 已修：`desktop/service.mjs` 的 `status` 每 30s 经混合端口探测 `cloudflare-dns.com/cdn-cgi/trace`，取真实出口 IP 与地区（内核未运行时置空） |
 | Codex 连通性 | 与本项目无关，详见第五节 |
-| 只支持 Windows | 依赖 PowerShell / netsh / tasklist |
+| 只支持 Windows | 依赖 PowerShell 改 DNS、`Get-CimInstance Win32_Process` 枚举进程、`netsh` 读接口 metric |
 | 订阅与公共 DNS 走直连 | 信源流量必须直连（见坑 15），**AI 业务流量仍全部走住宅独享 IP** |
 | 断流后自愈依赖内核存活 | 内核若已退出，需点「退出保护并恢复普通网络」而非「复检并恢复」 |
 
@@ -771,7 +896,7 @@ a.nel.cloudflare.com
 
 1. **网页版 ChatGPT / Claude** → 走 AI Guard 住宅 IP，已验证正常
 2. **Codex** → 与 AI Guard 无关，需要单独解决（检查 HostCodex 和 15721 服务）
-3. **另一个代理程序** → 不要和 AI Guard 同时开（端口会冲突，虽然现在会自动顺延）
+3. **另一个代理程序** → 不要和 AI Guard 同时开。桌面版会直接报「端口已被占用」并要求改端口（不顺延）；CLI 才会自动顺延。
 
 ---
 
@@ -785,7 +910,7 @@ a.nel.cloudflare.com
 
 4. **「日志显示命中」不等于「规则生效」**。`find-process-mode` 缺失时，`ProcessName` 明明在日志里，实际匹配逻辑根本没跑。
 
-5. **修改系统网络配置必须按地址族分开**。混写会导致驱动崩溃（0x50 蓝屏）。
+5. **别给不存在的参数打补丁**。`Set-DnsClientServerAddress` 没有 `-AddressFamily`（加上会被 `SilentlyContinue` 吞掉，表现为"DNS 一直没接管"），v4/v6 由 PowerShell 按格式自动归类；现行实现干脆只接管 IPv4、不向网卡注入 v6 虚拟地址。0x50 蓝屏的复现条件至今未确认。
 
 6. **用户的观察是最有价值的线索**。「网页能用、桌面版不能用」「早期实现 时不蓝屏」这两句话，各自直接砍掉了一半的排查空间。
 
@@ -821,63 +946,80 @@ a.nel.cloudflare.com
 
 ```
 aiguard/
-├── core/                    纯 TypeScript 逻辑，可独立测试
+├── core/                     纯 TypeScript 逻辑，编译到 dist/ 供 bin/ 与 desktop/ 引用
 │   ├── config/
-│   │   ├── types.ts         类型定义
-│   │   ├── constants.ts     G_AI / G_PROXY / CHAIN_TIMEOUT 等
-│   │   ├── rules.ts         规则装配（严格/精确/全局 + QUIC + STUN）
-│   │   ├── groups.ts        代理组 + fail-closed 守卫 + 信源放行规则
-│   │   ├── dns.ts           DNS 策略 + nameserver-policy 分片
-│   │   └── builder.ts       配置组装
+│   │   ├── types.ts          类型定义（含三模式语义）
+│   │   ├── constants.ts      G_AI / G_FRONT / G_PROXY / G_AUTO / TEST_URL / CHAIN_TIMEOUT
+│   │   ├── rules.ts          规则装配（严格/精确/全局 + QUIC + STUN + 国内 DoH 直连）
+│   │   ├── groups.ts         代理组 + fail-closed 守卫 + 信源放行规则 + provider
+│   │   ├── dns.ts            DNS 策略 + nameserver-policy 分片
+│   │   └── builder.ts        配置组装（含 interface-name / keep-alive / ipv6 绑定）
 │   ├── domain/
-│   │   ├── rule-source.ts   读取 rules/ 目录
-│   │   └── patcher.ts       日志分析 → 补丁建议
+│   │   ├── rule-source.ts    读取 rules/domains
+│   │   └── patcher.ts        日志分析 → 补丁建议
 │   ├── runtime/
-│   │   ├── mihomo.ts        configToYaml / findMihomo / ensureGeodata
-│   │   ├── elevate.ts       UAC 提权
-│   │   └── sysdns.ts        网卡 DNS 接管 / 恢复（按地址族）
-│   ├── doctor/              十项体检（ai-route.ts / ai-route-report.ts 为 AI 线路四项）
-│   └── settings.ts          配置读写（容错）
-├── rules/domains/*.yaml     10 个域名规则集 + fallback.json
-├── bin/
-│   ├── start.js             启动内核（端口检测/提权/geodata/DNS）
-│   ├── ui.js                浏览器控制面板
-│   ├── doctor.js            CLI 体检
-│   ├── set-mode.js          切换模式
-│   └── logs.js / patch.js
-├── desktop/                  Electron 桌面端
-│   ├── main.cjs             主进程 / 托盘 / IPC
-│   ├── worker.mjs           提权 worker（持有随机化的 controllerSecret）
-│   ├── worker-client.mjs    命名管道客户端
-│   ├── service.mjs          业务门面（doctor / saveSettings / …）
-│   ├── protection.mjs       断流状态机（unknown 不触发断流 + 自愈复核）
-│   ├── protected-config.mjs 受保护配置（信源规则在 MATCH,REJECT 之前）
-│   ├── health.mjs           周期检测（local 5s / exit 15s / full 60s）
-│   └── smoke.mjs            Electron 冒烟脚本
-├── native/GuardFilter/       .NET 8 WFP 驱动（整机断流）
-├── scripts/
-│   ├── build-guard-filter.mjs   构建并自检 guard-filter
-│   ├── prepare-desktop.mjs      暂存 vendor/mihomo
-│   └── desktop-smoke.cjs        真机冒烟 + 崩溃回收
-├── tests/                   371 个用例
-├── gui/                     Electron 前端（src/App.tsx 为实际界面）
+│   │   ├── mihomo.ts         configToYaml / findMihomo / ensureGeodata
+│   │   ├── elevate.ts        Start-Process -Verb RunAs（不携带 elevate.exe）
+│   │   └── sysdns.ts         网卡 DNS 接管 / 恢复 / 残留清理（现行只接管 IPv4）
+│   ├── doctor/
+│   │   ├── index.ts          runDoctor：6 项常规检测
+│   │   ├── exit-consistency / dns-leak / ipv6 / webrtc / long-connection / conflict.ts
+│   │   ├── ai-route.ts       独享 IP / 断网保护 / Claude Code 线路 / Claude 看到的 IP
+│   │   └── ai-route-report.ts 把上面 4 项组装成报告项
+│   └── settings.ts           settings.json 读写（容错合并默认值）
+├── rules/
+│   ├── domains/*.yaml        10 个规则集（chatgpt / claude / gemini / ip-check / 登录 3 / 支付 2 / CF 验证）
+│   └── fallback.json         规则集离线副本
+├── bin/                      CLI：start / doctor / set-mode / logs / patch / ui
+├── desktop/                  Electron 桌面端（主进程与提权 worker 同一入口）
+│   ├── main.cjs              窗口 / 托盘 / IPC / --aiguard-worker 分支
+│   ├── preload.cjs           contextBridge 白名单
+│   ├── worker.mjs            提权 worker：起内核、随机 controllerSecret、DNS 接管、配置热重载
+│   ├── worker-client.mjs     命名管道客户端 + needsElevation 判定
+│   ├── worker-protection.mjs 保护装配（WFP lock/unlock 与配置切换的先后顺序）
+│   ├── protection.mjs        断流状态机（分级判定 + 自愈复核 + 自适应降频）
+│   ├── protected-config.mjs  受保护 YAML（信源规则置于 MATCH,REJECT 之前）
+│   ├── protected-stop.mjs    退出 / 管道断开时的收尾顺序
+│   ├── protection-diagnostics.mjs 断流瞬间的取证快照
+│   ├── health.mjs            周期检测（local 15s / exit 15→45s / full 60→180s）
+│   ├── probes.mjs            STUN / 长连接 / DNS 劫持 / 网卡与进程探测
+│   ├── network.mjs           HTTP CONNECT 代理（Node fetch 不认 HTTP_PROXY）
+│   ├── preflight.mjs         启动前置门（Captive Portal / 无外网检测）
+│   ├── firewall.mjs          guard-filter 的 JS 门面（每个命令都读回真实状态）
+│   ├── nodes.mjs             普通代理节点选择与恢复
+│   ├── timezone.mjs          住宅出口时区识别 + Windows 时区应用/恢复
+│   ├── settings.mjs          桌面侧配置校验
+│   ├── service.mjs           业务门面（status/start/stop/doctor/setMode/…）
+│   ├── kernel-session.mjs    内核会话（启动 / 就绪 / DNS / 停止）
+│   └── smoke.mjs             Electron 冒烟脚本
+├── native/GuardFilter/       .NET 8 WFP 助手（stage-kernel / prepare-runtime / write-config / lock / unlock / status）
+├── gui/src/                  React 界面（App.tsx 为实际入口；panels/ 为早期拆分，当前未被引用）
+├── scripts/                  build-guard-filter / prepare-desktop / launch-desktop / pack-asar /
+│                             desktop-smoke / diagnose-network / probe-isolated / verify-dns-egress / verify-real.ps1
+├── tests/                    41 个文件 / 409 个用例（408 passed + 1 条件跳过）
+├── docs/                     实机验证记录与设计文档
 └── README.md
 ```
+
+> `desktop/*.mjs` 运行期 import 的是 `../dist/core/*.js`（编译产物，`.gitignore` 忽略）。
+> 直接拷 `desktop/` 或未执行 `npm run build` 就启动会 `ERR_MODULE_NOT_FOUND`；
+> 正常入口是 `npm run desktop` / `desktop:pack` / `desktop:dist`（都会先编译）。
 
 ### 打包产物清单
 
 ```
-release/win-unpacked/AI Guard.exe          免安装目录（需保留整个目录）
-release/AI-Guard-Setup-0.1.0-x64.exe        NSIS 安装包
-release/SHA256SUMS.txt                      校验和
-AI Guard/                                   本地可直接双击运行的目录
+release/win-unpacked/AI Guard.exe                 免安装目录（需保留整个目录）
+release/AI-Guard-Setup-0.3.2-x64.exe              NSIS 安装包（artifactName 由 electron-builder.yml 生成）
+AI Guard/                                         本地可直接双击运行的目录（手工同步，不入库）
   ├── AI Guard.exe
   └── resources/
-      ├── app.asar                          应用代码
-      ├── mihomo/                           内核 + geodata + manifest
-      ├── guard-filter/                     WFP 辅助程序（实时保护必需）
-      └── elevate.exe                       UAC 提权
+      ├── app.asar                                应用代码
+      ├── mihomo/                                 内核 + geodata + manifest（extraResources）
+      └── guard-filter/                           WFP 辅助程序（extraResources，实时保护必需）
 ```
 
-> `guard-filter/` 曾经在 `extraResources` 里漏配，导致实时保护一开就报
-> `spawn ... aiguard-guard-filter.exe ENOENT`（见坑 14）。
+> - `elevate.exe` 不在构建产物里：提权走 PowerShell `Start-Process -Verb RunAs`（`core/runtime/elevate.ts`）。
+>   旧目录里若残留 `resources/elevate.exe`，属于历史 Tauri 包的遗留文件，可删。
+> - `release/SHA256SUMS.txt` 不是构建脚本产物，需要时手工生成。
+> - `guard-filter/` 曾经在 `extraResources` 里漏配，导致实时保护一开就报
+>   `spawn ... aiguard-guard-filter.exe ENOENT`（见坑 14）。

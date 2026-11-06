@@ -21,6 +21,7 @@ ChatGPT / Claude / Gemini 防封工具。保证主流 AI 服务（OpenAI / Anthr
 
 | 现象 | 原因与处理 |
 |---|---|
+| **WiFi 能连但完全无法上网，蓝牙网络共享也建不起来，重启电脑无效** | 实时保护的 WFP 规则（持久化，绑定 BFE）在阻断"除内核外所有应用"。若内核异常退出而规则残留，整机就没有任何程序能上网。**以管理员身份运行安装目录下的 `resources/guard-filter/emergency-unlock.cmd`**（安装时会创建「AI Guard 紧急解除网络锁定」桌面与开始菜单快捷方式，脚本会自己请求 UAC）。它只删本软件那 4 条固定 GUID 规则并清理残留 DNS，不碰其他软件规则。详见 `PROJECT_NOTES.md` 坑 26。 |
 | `Guard helper failed: spawn ...aiguard-guard-filter.exe ENOENT` | 安装包缺 `resources/guard-filter/`（实时保护的 WFP 辅助程序）。重新运行 `npm run desktop:pack` 并同步整个 `resources/` 目录；`guard-filter` 需与 `mihomo/` 同级。 |
 | 界面显示「已断流」，点「复检并恢复」一直失败 | 内核已退出时复检必然失败。改点 **「退出保护并恢复普通网络」** 清理断流状态，然后重新启动内核。 |
 | 开机即报 5 项体检失败（TUN 接管 / 出口一致性 / WebRTC / 长连接同时失败） | 多为内核未能拉取机场订阅导致（见 `PROJECT_NOTES.md` 坑 15）。检查 `%APPDATA%\aiguard\mihomo\desktop.log` 里是否有 `airport-sub ... EOF` 或 `provider airport-sub error`。 |
@@ -63,16 +64,20 @@ AI 服务（尤其 Claude）的风控会检查网络指纹一致性。如果同�
 
 **真实案例**（本工具诞生的原因）：早期方案把 `chatgpt.com` / `claude.ai` 正确导向住宅 IP，但漏掉了 Cloudflare 的遥测域名 `a.nel.cloudflare.com`——它不在规则集里，于是回落到兜底规则走了机场 IP。实测比例 **13 次走机场、3 次走住宅**。结果是 ChatGPT 界面反复显示 `Reconnecting... waiting for network`，回复卡在「正在思考」。
 
-AI Guard 的两种模式都堵住了这个洞：
+AI Guard 的三种模式（`strict` 默认 / `precise` / `global`）都堵住了这个洞：
 
-| | 严格模式（默认） | 精确模式 |
-|---|---|---|
-| AI 主域名 | 走独享 IP | 走独享 IP |
-| Cloudflare 全家桶 | **走独享 IP**（含 `a.nel.*`） | 走机场 |
-| 出口一致性 | 绝对保证 | 依赖规则集完整度 |
-| 流量消耗 | 较高 | 较低 |
+| | 严格模式（默认） | 精确模式 | 全局模式 |
+|---|---|---|---|
+| AI 主域名 | 走独享 IP | 走独享 IP | 走独享 IP |
+| Cloudflare 全家桶 | **走独享 IP**（含 `a.nel.*`） | **走独享 IP**（同一套兜底） | 走独享 IP |
+| 其他海外流量 | 走机场 | 走机场 | 走独享 IP |
+| 国内站点 | 直连 | 直连 | 直连（`GEOSITE,cn`） |
+| 出口一致性 | 绝对保证 | 依赖规则集完整度 | 绝对保证（国内站点除外） |
+| 流量消耗 | 较高 | 较低 | 最高 |
 
-> 精确模式会重新暴露上述 bug，仅在流量紧张时使用。
+> 精确模式与严格模式现在的差别只剩「非 AI、非 Cloudflare 的海外流量走机场」。
+> `cloudflare.com` / `cloudflare-dns.com` 兜底两种模式都有——精确模式缺它时会重现
+> `a.nel.cloudflare.com` 走机场的原始 bug（见 `PROJECT_NOTES.md` 坑 25）。
 
 ### 覆盖的 AI 服务与生态链路（10/10 完整覆盖）
 
@@ -82,9 +87,9 @@ AI Guard 的两种模式都堵住了这个洞：
 * **第三方登录鉴权**：Apple ID（`appleid.apple.com`）、Google OAuth（`accounts.google.com`）、Microsoft Live / Azure AD。
 * **支付与订阅保护**：Stripe 信用卡绑卡收银台、Google One / Google Pay 订阅。
 * **Cloudflare 全家桶防跳变**：严格 / 精确模式下均强制将 Cloudflare 遥测（`a.nel.cloudflare.com` 等）与人机验证盾锁定在独享住宅出口。精确模式若缺这条兜底，遥测会走机场 IP，出口一跳变 ChatGPT 界面就无限重连。
-* **DoH 防泄漏**：覆盖 1.1.1.1 / 8.8.8.8 等 5 个公共 DNS IP 与常见 DoH 域名，防止浏览器通过 443 端口绕过 53 端口劫持泄露真实解析。
+* **DoH 防泄漏**：5 个公共 DNS IP（`1.1.1.1` / `1.0.0.1` / `8.8.8.8` / `8.8.4.4` / `9.9.9.9`）与 14 条常见 DoH 域名（`dns.google`、`cloudflare-dns.com`、`one.one.one.one`、`dns.quad9.net`、`dns.nextdns.io`、`doh.opendns.com`、`dns.adguard-dns.com` 等）全部收进住宅组，防止浏览器通过 443 端口绕过 53 端口劫持泄露真实解析。
 * **DNS 分流与隐私**：AI / 海外域名走住宅加密 DoH（`1.1.1.1`）；国内域名走国内加密 DoH（`223.5.5.5` / `doh.pub`），ISP 只能看到加密流量、看不到具体访问的国内站点。
-* **纯净度检测站**：内置 48 个常用 IP 检测与伪装度查询站，查 IP 时一律显示住宅节点。
+* **纯净度检测站**：内置 `rules/domains/ip-check.yaml` 的 48 条规则（47 个不同站点，含一条重复），查 IP 时一律显示住宅节点。
 
 ## 前置条件
 
@@ -124,7 +129,7 @@ node bin/ui.js
 # 浏览器打开 http://127.0.0.1:9123
 ```
 
-界面提供：内核启停、出口 IP 与模式实时状态、严格/精确切换、十项体检、
+界面提供：内核启停、出口 IP 与模式实时状态、严格/精确/全局切换、十项体检、
 规则补丁扫描、配置在线编辑、内核日志。
 
 > 旧 Tauri 实现曾遇到窗口创建「拒绝访问」，根因未确认。当前桌面入口已迁移到 Electron，`gui/src-tauri/` 作为历史参考保留。
@@ -141,11 +146,11 @@ AIGUARD_EXPECTED_IP=203.0.113.7 node bin/doctor.js   # 校验出口是否为预�
 
 | 检测项 | 判定逻辑 |
 |---|---|
-| 出口一致性 | 并发请求 `claude.ai` / `chatgpt.com` / `www.cloudflare.com` 的 `/cdn-cgi/trace`，三者 IP 必须相同 |
-| DNS 泄漏 | 解析出口与流量出口的国家必须一致 |
-| IPv6 防泄漏 | 有公网 IPv6 且能探测到 → 失败（说明绕过了代理） |
-| WebRTC 防泄漏 | STUN 探测（UDP 打洞，不走 HTTP 代理）；探测被规则拦截 → 通过 |
-| 长连接稳定性 | 对 `ws.chatgpt.com` 建立 TLS 后发心跳，保持 30s+ 不断 |
+| 出口一致性 | 并发请求 `www.cloudflare.com` / `challenges.cloudflare.com` / `cloudflare-dns.com` 的 `/cdn-cgi/trace`，三者 IP 必须相同。**刻意不探测 `claude.ai` / `chatgpt.com`**：不向用户的线上账号环境发请求，且这三个端点都在 Cloudflare 兜底规则内，测出来才有意义 |
+| DNS 泄漏 | 三层判定：① 读物理网卡 DNS 是否为隧道地址 `198.18.0.2`；② 未接管时探测 TUN 的 `dns-hijack`（向公网 DNS 查 AI 域名，返回 fake-ip 即安全）；③ 都不可用时才退回 HTTP 出口 `loc=` 与预期国家对照 |
+| IPv6 防泄漏 | 权威层读系统配置：有公网 IPv6 时必须存在 Meta 的 v6 地址且 `::/0` 路由指向 TUN；STUN 结果只作佐证 |
+| WebRTC 防泄漏 | STUN 探测（UDP 打洞，不走 HTTP 代理）：探不到且网络正常 = 被规则拦住 → 通过；探到非独享 IP → 失败（未开 TUN 时属架构限制） |
+| 长连接稳定性 | 经代理对 `www.cloudflare.com:443` 建 TLS 后发心跳，30s 窗口（按 0.8 时序误差取 24s）不断即通过 |
 | 代理冲突 | 扫描是否有其他 TUN 客户端在跑 |
 | 独享 IP | 探测到的出口 IP 必须等于配置的住宅独享 IP |
 | 断网保护 | 「AI Guard 专用」组必须是 Fallback 且含阻断节点，住宅 IP 失效时流量被阻断而非回落直连 |
@@ -157,6 +162,17 @@ AIGUARD_EXPECTED_IP=203.0.113.7 node bin/doctor.js   # 校验出口是否为预�
 它们只做手动体检，不进入周期监控：依赖 claude.ai 的外部可达性和进程瞬时状态，
 拿来做断流判据会在第二轮就误触发整机断流。
 
+「十项」指的是 **CLI / 非实时保护** 路径（`bin/doctor.js`：6 项常规 + 4 项 AI 线路）。
+实时保护开着时项数不同，以代码为准：
+
+| 路径 | 项数 | 组成 |
+|---|---|---|
+| `bin/doctor.js` / 未开实时保护 | 10 | `runDoctor` 6 项 + AI 线路 4 项 |
+| 实时保护 · 周期 local（15s） | 6 | tun / dns / ipv6 / conflict / dns-policy / kernel |
+| 实时保护 · 周期 exit（15→45s） | 1 | exit |
+| 实时保护 · 周期 full（60→180s） | 9 | local 6 项 + exit / webrtc / long |
+| 实时保护 · 手动完整体检 | 13 | full 9 项 + AI 线路 4 项 |
+
 ## 切换模式
 
 ```bash
@@ -164,18 +180,20 @@ node bin/set-mode.js strict    # 严格
 node bin/set-mode.js precise   # 精确
 ```
 
-改的是 `settings.json`，重启内核后生效。
+CLI 的 `set-mode.js` 只接受 `strict` / `precise`；`global` 要在桌面界面或浏览器面板切换
+（那两条路径是热重载），或直接改 `settings.json` 的 `mode` 字段。
+CLI 改的是 `settings.json`，重启内核后生效。
 
 ## 验证清单
 
 启动后逐项确认（`bin/doctor.js` 会全部覆盖）：
 
-1. `claude.ai` 与 `chatgpt.com` 的 `/cdn-cgi/trace` 出口 IP 相同
+1. `bin/doctor.js` 的出口一致性通过（探测端点是 `www.cloudflare.com` / `challenges.cloudflare.com` / `cloudflare-dns.com`）；想人工复核可在浏览器打开 `claude.ai/cdn-cgi/trace` 与 `chatgpt.com/cdn-cgi/trace`，两处 `ip=` 应与独享 IP 相同
 2. `a.nel.cloudflare.com` 出口与上述一致 ← **核心回归项**
 3. mihomo 日志中 AI 域名不出现 `match Match using 普通代理`
 4. ChatGPT 桌面版连续对话 10 分钟无 `Reconnecting`
 5. 断开住宅 IP → AI 网站应**连接失败**，而非回落直连
-6. 强杀进程后，网卡 DNS 自动恢复，整机可上网
+6. 强杀主进程（`AI Guard.exe`，worker 仍在）→ 管道断开，worker 停止自己的内核并恢复网卡 DNS；若 worker 也被强杀或断电，则下次启动时从 `desktop-dns-backup.json` 恢复（需 UAC）
 
 ## 从 早期实现 迁移
 
@@ -204,7 +222,7 @@ bin/             CLI 入口
 
 ## 已知限制
 
-- **仅支持 Windows**（依赖 PowerShell 改 DNS、tasklist 枚举进程）
+- **仅支持 Windows**（依赖 PowerShell 改 DNS、`Get-CimInstance Win32_Process` 枚举进程）
 - **住宅 IP 必须经机场中转**（国内无法直连，实测确认）
 - **规则以文件维护**，无图形化编辑器
 - 长连接探测需发心跳：纯空闲隧道会被 mihomo 的 idle-timeout 在约 16s 关闭，那是内核行为不是链路故障
@@ -217,4 +235,14 @@ npm test           # 编译 core 后运行全部用例
 npm run typecheck  # tsc --noEmit
 ```
 
-`e2e-config.test.ts` 会调用真实 mihomo 做配置语法校验。未设置 `AIGUARD_MIHOMO_PATH` 且自动查找失败时该用例跳过（不判失败）。
+`e2e-config.test.ts` 会调用真实 mihomo 做配置语法校验。`findMihomo()` 只查
+`%APPDATA%\aiguard\mihomo\`、`%LOCALAPPDATA%\Programs\早期实现\resources\`、
+`%LOCALAPPDATA%\Programs\aiguard\` 三处，**不查仓库内的 `vendor/mihomo/`**，
+所以本地想跑这条用例要显式指定：
+
+```powershell
+$env:AIGUARD_MIHOMO_PATH = '<仓库路径>\vendor\mihomo\mihomo.exe'
+npx vitest run tests/e2e-config.test.ts
+```
+
+都不提供时该用例跳过（不判失败）。

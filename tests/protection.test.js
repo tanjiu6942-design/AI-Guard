@@ -188,16 +188,29 @@ describe('continuous protection', () => {
     await vi.advanceTimersByTimeAsync(70000);
     expect(deps.check).toHaveBeenCalledTimes(count);
   });
-  it('a hung check expires into an abnormal result', async () => {
+  /**
+   * 这条断言曾被写成 `phase === 'locked'`, 即"挂起超时立即整机断流"。
+   * 2026-11-06 的现场证明那是有害的: 三个探针 i/o timeout -> 45 秒硬超时
+   * -> 立即断流 -> 内核随之退出 -> 除死内核外所有应用被 WFP 持久规则挡死,
+   * 用户只能还原系统。
+   *
+   * 探测超时是**测量**问题, 不是安全判定。现行语义:
+   *   - 首轮超时 -> 只记 suspect, 不锁
+   *   - 连续两轮超时 -> 仍然锁(fail-closed 不变, 见 collection-failure.test.js)
+   * 而"读不到本机状态"(权限被拒/异常抛出)依旧立即锁, 那条契约没动。
+   */
+  it('a hung check expires into an abnormal result without locking on the first round', async () => {
     vi.useFakeTimers();
     const { monitor, deps } = fixture();
     deps.check.mockImplementation(() => new Promise(() => {}));
     const start = monitor.start();
     await vi.advanceTimersByTimeAsync(46000);
     await start;
-    expect(monitor.snapshot().phase).toBe('locked');
+    expect(monitor.snapshot().phase).toBe('suspect');
+    expect(deps.lock).not.toHaveBeenCalled();
     expect(deps.unlock).not.toHaveBeenCalled();
-    await monitor.shutdown();
+    monitor.active = false;   // check 永不 resolve, shutdown 会等挂起的 flight
+    vi.useRealTimers();
   });
   it('serializes a late unlock with a newer emergency lock', async () => {
     const { monitor, deps } = fixture();

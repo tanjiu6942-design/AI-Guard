@@ -199,6 +199,7 @@ if (workerIndex >= 0) {
           : join(root, "vendor");
         const { WorkerClient } = await import("./worker-client.mjs");
         const { DesktopService } = await import("./service.mjs");
+        const { elevateGuardCommand } = await import("./elevate-guard.mjs");
         worker = new WorkerClient({
           executable: process.execPath,
           args: app.isPackaged ? [] : [root],
@@ -206,6 +207,9 @@ if (workerIndex >= 0) {
           cwd: app.isPackaged ? process.resourcesPath : root,
           dataDir,
           resources,
+          // worker 已退出时, 解除整机断流只能由主进程经 UAC 执行 ——
+          // 主进程是 asInvoker, 而 guard-filter 的 unlock 要求管理员权限。
+          elevation: elevateGuardCommand,
         });
         service = new DesktopService({ dataDir, root, worker });
         worker.onProtection = (value) => {

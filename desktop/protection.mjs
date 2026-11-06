@@ -82,8 +82,22 @@ export class ProtectionMonitor {
     if (!this.active) return;
     this.timer = this.schedule(() => {
       if (!this.active) return;
-      if (this.state.phase === 'lock_failed') void this.trip(this.state.reason);
-      else if (this.state.phase === 'locked') {
+      /**
+       * `lock_failed` 不再自动重试。
+       *
+       * 原来这里是 `void this.trip(this.state.reason)`，而 trip() 又会去 lock()。
+       * lock 持续失败时（WFP 拒绝 / 权限不足 / helper 缺失）状态永远停在
+       * lock_failed，于是每 15 秒重试一次，无限循环。
+       * 实测 2 分钟内重试 8 次；昨夜(2026-11-06) 的 protection-state.json
+       * 正停在 lock_failed，与该循环吻合。
+       *
+       * 重复失败不会因为多试几次就成功，只会把一次失败放大成持续的后台噪音。
+       * 正确做法：如实保留 lock_failed，等用户修好原因后手动复检。
+       */
+      if (this.state.phase === 'lock_failed') {
+        // 保持状态，不重试；下面的 arm() 仍会续期，以便用户在修好原因后
+        // 通过 resume()/手动复检继续，而这不需要后台轮询。
+      } else if (this.state.phase === 'locked') {
         if (this.autoReconnect && !this.resumePromise && !this.tripPromise && this.now() >= (this.nextResume ?? 0)) {
           this.nextResume = this.now() + 15000;
           void this.resume().catch(() => {});
@@ -129,13 +143,34 @@ export class ProtectionMonitor {
       const items = await Promise.race([
         this.check(kind),
         new Promise((_resolve, reject) => {
-          timer = this.schedule(() => reject(Error('检测超过截止时间')), kind === 'full' ? 45000 : 20000);
+          timer = this.schedule(() => {
+            /**
+             * 超时是**测量**问题, 不是安全判定。
+             *
+             * full 检测含一条 30 秒长连接 + 3 个出口 trace, 全部要过跨境住宅隧道
+             * (实测单连接排队可达 10 秒)。45 秒硬超时很容易在链路拥塞时踩中。
+             * 现场(2026-11-06 07:04): 三个探针全部 i/o timeout -> 这里超时
+             * -> 曾据此立即整机断流 -> 内核随后退出 -> 除死内核外全被挡死。
+             *
+             * 所以超时标 `timedOut`, 由调用方区别对待: 它不是"确认不安全"。
+             */
+            const e = Error('检测超过截止时间');
+            e.timedOut = true;
+            reject(e);
+          }, kind === 'full' ? 45000 : 20000);
         }),
       ]);
       if (!Array.isArray(items) || !items.length) throw Error('检测没有返回有效项目');
       return items;
     } catch (e) {
-      return [{ key: `collection-${kind}`, title: '检测能力', state: 'unknown', detail: e.message, critical: false }];
+      return [{
+        key: `collection-${kind}`, title: '检测能力', state: 'unknown',
+        detail: e.message,
+        // 读不到本机状态(权限被拒/异常抛出)无法证明安全 -> 立即 fail-closed。
+        // 只是探测超时则不算确认泄漏, 与 unknown 同等待遇: 连续两轮才锁。
+        critical: false,
+        timedOut: e.timedOut === true,
+      }];
     } finally { this.cancel(timer); }
   }
   merge(items, sampledAt) {
@@ -177,13 +212,25 @@ export class ProtectionMonitor {
        * - collectionFailed（连本机状态都读不到）：无法证明安全，立刻 fail-closed
        * - 其余（出口探测端点全部无响应 unknown、长连接抖动 fail）都属于「无法判断」
        *   或链路质量，不是泄漏。住宅 SOCKS5 跨境链路并发高时单连接排队可达 10 秒级，
-       *   把排队误判成泄漏会造成反复误断流。这类异常必须**连续 3 轮**仍然如此才断流。
+       *   把排队误判成泄漏会造成反复误断流。这类异常要**连续两轮**仍然如此才断流
+       *   （第二轮即 failures 计数 >= 1，见下方 persistent 判定）。
        *
        * 计数放在 failures 里，成功一轮即清零，避免"断过一次就永久过敏"。
        */
       const hasCriticalLeak = abnormal.some(x => x.critical);
-      // 确认泄漏 / 采集失败：任何阶段立刻 fail-closed
-      if (collectionFailed || hasCriticalLeak) return this.trip(reason);
+      /**
+       * 区分三种「无法继续」的程度, 只有真正确认的两类才立即 fail-closed:
+       *
+       * 1. critical        —— 观察到泄漏/出口改变。立即锁, 无争议。
+       * 2. 读不到本机状态    —— 权限被拒、检测崩溃。无法证明安全, 立即锁。
+       * 3. 只是探测超时      —— 跨境链路排队/抖动。**不立即锁**: 这是测量问题。
+       *    现场(2026-11-06 07:04)三个探针全部 i/o timeout -> 45 秒硬超时
+       *    -> 曾据此立即整机断流 -> 内核随后退出 -> 除死掉的内核外所有应用
+       *    被 WFP 挡死, 用户只能还原系统。链路抖动不该升级成整机断网。
+       *    它仍受 fail-closed 约束: 连续两轮仍超时照样锁(见下方 persistent)。
+       */
+      const hardFailure = collected.some(x => x.key?.startsWith('collection-') && !x.timedOut);
+      if (hasCriticalLeak || hardFailure) return this.trip(reason);
       // 连续第 2 轮仍异常。刻意不因 unknown 而放宽：连续 unknown 必须锁死，
       // 否则只要阻断探测端点就能让「出口一致性」永远无法判断，形成 fail-open
       // （见 source-bypass 契约）。真正要治的是 unknown 的成因 —— 住宅链路连接被

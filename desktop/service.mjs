@@ -26,6 +26,21 @@ export class DesktopService {
     return loadSettings(this.settingsPath);
   }
   /**
+   * 本机是否被 AI Guard 自己的 WFP 规则锁着。
+   *
+   * `status` 子命令不需要管理员权限(native/GuardFilter/Program.cs 明确只对
+   * lock/unlock/check 要求提权), 所以启动前的这道判定不额外弹 UAC。
+   * 任何异常都按"没锁"处理 —— 前置门保持原有的保守行为, 不因此更宽松。
+   */
+  async selfLocked() {
+    try {
+      const state = await this.worker.guardForRecovery().status();
+      return state.locked === true;
+    } catch {
+      return false;
+    }
+  }
+  /**
    * AI 线路检测的 4 项(独享 IP / 断网保护 / Claude Code 线路 / Claude 看到的 IP)。
    *
    * 必须由提权 worker 计算: 实时保护开启时 mihomo 控制接口的 secret 被换成随机值,
@@ -120,7 +135,10 @@ export class DesktopService {
       case "start":
         requireConnection(s);
         // 在提权之前拦住未认证网络：见 preflight.mjs 顶部注释里那条死锁。
-        await ensureNetworkReady();
+        // 但若本机被本软件自己的 WFP 规则锁着，前置门必须让路 ——
+        // 否则「要解锁必须先启动、要启动必须先出网、要出网必须先解锁」——
+        // 用户会被彻底锁死(实测 2026-11-06 只能还原系统)。
+        await ensureNetworkReady({ selfLocked: await this.selfLocked() });
         this.nextProbe = 0;
         return this.worker.start(s);
       case "stop":

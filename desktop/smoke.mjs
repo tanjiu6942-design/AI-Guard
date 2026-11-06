@@ -117,6 +117,22 @@ export async function runSmoke({ app, win, service, dataDir }) {
     await shot("logs");
     assert.equal((await service.call("scan")).length, 0);
     check("logs and rule scan");
+    // 使用指南页：首次打开默认展开第一节，点击可收起/展开。
+    await js("document.querySelectorAll('.nav-item')[4].click()");
+    await wait("!!document.querySelector('.guide-toggle')");
+    assert.equal(await js("document.querySelectorAll('.guide-section').length"), 5);
+    assert.equal(await js("document.querySelectorAll('.guide-body').length"), 1);
+    assert.ok(await js("document.querySelector('.guide-body').textContent.includes('启动内核')"));
+    // 默认展开第一节（第一次使用），点击第一节应收起。
+    await js("document.querySelectorAll('.guide-toggle')[0].click()");
+    await wait("document.querySelectorAll('.guide-body').length === 0");
+    // 再展开第二节（四个页面分别做什么）。
+    await js("document.querySelectorAll('.guide-toggle')[1].click()");
+    await wait("document.querySelectorAll('.guide-body').length === 1 && document.querySelector('.guide-body').textContent.includes('连接概览')");
+    assert.ok(await js("document.querySelector('.guide-body').textContent.includes('网络体检')"));
+    await shot("guide");
+    check("in-app guide renders all sections and toggles");
+    await js("document.querySelectorAll('.nav-item')[3].click()");
     win.close();
     assert.equal(win.isDestroyed(), false);
     assert.equal(win.isVisible(), false);

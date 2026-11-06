@@ -104,15 +104,38 @@ describe('strict continuous health checks', () => {
   it.each(['tunUp', 'route4', 'route6', 'tunIpv6'])('detects lost %s protection', field => {
     expect(evaluateSystem({ ...system(), [field]: false }).some(x => x.state === 'fail' && x.critical)).toBe(true);
   });
-  it('does not compare SOCKS gateway address to actual egress', async () => {
+  /**
+   * 这条测试原名 "does not compare SOCKS gateway address to actual egress",
+   * 断言 `residential.server` 不该与出口 IP 比对。那是**错的**：
+   *
+   *   - README:34 明确写 "`residential.server` 应填住宅 IP（不是域名）"
+   *   - service.mjs 的 CLI 体检正是拿它当 expectedIp 校验出口
+   *
+   * 不比对会留下封号漏洞：住宅 SOCKS5 失效、流量回落到机场时，
+   * 三个探针**一致地**报告机场 IP，只比"互相一致"会判 ok 并显示全绿，
+   * 而用户此刻正以机场 IP 访问 Claude。
+   *
+   * 现在保留的仍然是"观测到出口发生变化要 fail"这条契约。
+   */
+  it('compares actual egress against the configured residential IP', async () => {
     let ip = '203.0.113.10';
     const check = createHealthChecker({
-      settings: { residential: { server: '192.0.2.4' } },
+      settings: { residential: { server: '203.0.113.10' } },
       fetchFn: async () => ({ ok: true, text: async () => `ip=${ip}\nloc=US\n` }),
     });
+    // 与配置一致 -> ok
     expect((await check('exit'))[0].state).toBe('ok');
+    // 出口变了 -> 必须 fail
     ip = '203.0.113.11';
     expect((await check('exit'))[0]).toMatchObject({ state: 'fail', critical: true });
+  });
+  it('does not compare when residential.server is a hostname', async () => {
+    // 填域名时无法比对出口 IP，此时退回"只看互相一致"，不误报。
+    const check = createHealthChecker({
+      settings: { residential: { server: 'res.example.net' } },
+      fetchFn: async () => ({ ok: true, text: async () => 'ip=203.0.113.10\nloc=US\n' }),
+    });
+    expect((await check('exit'))[0].state).toBe('ok');
   });
   it('treats unavailable exit endpoints as unverified rather than healthy', async () => {
     const check = createHealthChecker({ settings: {}, fetchFn: async () => { throw Error('offline'); } });

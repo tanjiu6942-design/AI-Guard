@@ -34,8 +34,9 @@ const PROCESS_RULES = [
  */
 const DESKTOP_VIA_PROXY = false;
 
-// 严格模式专属: Cloudflare 全家桶兜底
+// strict 与 precise 共用的 Cloudflare 全家桶兜底
 // 修复 a.nel.cloudflare.com 走错出口的根因
+// (global 由 MATCH 送进住宅组, 无需重复添加; precise 缺这条曾重现原始 bug)
 const CLOUDFLARE_CATCH_ALL = [
   'DOMAIN-SUFFIX,cloudflare.com',
   'DOMAIN-SUFFIX,cloudflare-dns.com',

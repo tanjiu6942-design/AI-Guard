@@ -137,7 +137,7 @@ async function status(){
     $('dot').className='dot '+(s.running?'ok':'bad');
     $('running').textContent=s.running?'运行中':'已停止';
     $('exit').textContent=s.exitIp?(s.exitIp+(s.loc?' ('+s.loc+')':'')):'—';
-    $('mode').textContent=s.mode==='strict'?'严格':'精确';
+    $('mode').textContent={strict:'严格',precise:'精确',global:'全局'}[s.mode]||s.mode;
     $('tun').textContent=s.tunEnabled?'已接管':'未启用';
     $('port').textContent=s.mixedPort;
     $('toggle').textContent=s.running?'停止':'启动';
@@ -146,7 +146,7 @@ async function status(){
     $('bGlobal').className=s.mode==='global'?'on':'';
     const HINT={
       strict:'Cloudflare 全家桶走独享 IP，出口绝对一致，防封最强。流量消耗较高。',
-      precise:'仅 AI 主域名走独享 IP，省流量。注意：Cloudflare 新子域可能走错出口。',
+      precise:'仅规则覆盖的 AI 域名与 Cloudflare 兜底走独享 IP，其余走机场，更省流量。规则未覆盖的新域名仍可能走机场。',
       global:'除内网和国内站点外，所有流量都走独享 IP。出口最统一，但查 IP 会看到你的真实住宅 IP。'+
              '警告：流量消耗极大，看视频/下载都算独享 IP 流量。'
     };

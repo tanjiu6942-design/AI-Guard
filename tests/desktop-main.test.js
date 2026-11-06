@@ -83,6 +83,8 @@ async function fixture(phase = "off", {
     __load: async (name) => {
       if (name === "worker-client.mjs") return { WorkerClient };
       if (name === "service.mjs") return { DesktopService };
+      // 主进程用它在 worker 已退出时经 UAC 解除整机断流(坑 26)。
+      if (name === "elevate-guard.mjs") return { elevateGuardCommand: async () => 0 };
       throw Error(`unexpected fixture import: ${name}`);
     },
     console, URL, Response, setTimeout, clearTimeout,

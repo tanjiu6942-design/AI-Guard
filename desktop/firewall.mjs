@@ -4,13 +4,29 @@ import { isAbsolute } from 'node:path';
 
 // The helper owns WFP identity and persistence; no local cache can prove a lock.
 export class WindowsGuard {
-  constructor({ executable, dataDir, timeout = 15000 }) {
+  constructor({ executable, dataDir, timeout = 15000, elevation = undefined }) {
     const command = Array.isArray(executable) ? executable : [executable];
     if (!command[0] || !isAbsolute(command[0])) throw new Error('Guard helper requires an absolute executable path');
     if (!dataDir || !isAbsolute(dataDir)) throw new Error('Guard helper requires an absolute data directory');
     this.command = command;
     this.dataDir = dataDir;
     this.timeout = timeout;
+    /**
+     * 提权器: (exe, args) => Promise<exitCode>。
+     *
+     * 为什么需要它 —— guard-filter 的写操作(lock/unlock/check)要求管理员权限
+     * (native/GuardFilter/Program.cs 的 RequireAdministrator), 而桌面主进程是
+     * asInvoker 启动的(electron-builder.yml)。实测普通权限下:
+     *   status -> exit 0
+     *   unlock -> exit 1, "Administrator elevation is required..."
+     *
+     * 所以「worker 已退出时由主进程自己解除锁定」必须走 UAC,
+     * 直接 execFile 在生产环境永远是失败的。
+     * 传 null 表示本路径不支持提权(测试/无 GUI 环境)。
+     */
+    this.elevation = elevation;
+    /** 变更类操作需要提权; status 不需要。 */
+    this.mutatingRequiresElevation = true;
   }
 
   async invoke(args, input) {
@@ -108,6 +124,25 @@ export class WindowsGuard {
     await this.invoke(['unlock']);
     const value = await this.status();
     if (value.locked || value.complete === false) throw new Error('Guard unlock left filters installed or incomplete');
+    return value;
+  }
+
+  /**
+   * 经 UAC 解除锁定 —— 主进程(非提权)在 worker 已退出时的唯一可用路径。
+   *
+   * 与 unlock() 的区别只有一点: 命令通过提权器发出。
+   * 校验仍然是读真实状态(非提权即可), 所以"以为解了其实没解"依然会被抓住。
+   */
+  async unlockEscalated() {
+    if (typeof this.elevation !== 'function') {
+      throw new Error('需要管理员权限解除系统断流，但当前环境无法请求提权');
+    }
+    const code = await this.elevation(this.command[0], [...this.command.slice(1), 'unlock']);
+    if (code !== 0) throw new Error(`解除系统断流失败（提权进程退出码 ${code}）`);
+    const value = await this.status();
+    if (value.locked || value.complete === false) {
+      throw new Error('Guard unlock left filters installed or incomplete');
+    }
     return value;
   }
 }

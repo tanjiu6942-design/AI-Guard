@@ -672,3 +672,116 @@ select:disabled {
     transition: none !important;
   }
 }
+
+/* ---------- 使用指南 ---------- */
+.guide-section {
+  padding: 0;
+}
+.guide-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+}
+.guide-toggle:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.guide-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.guide-caret {
+  flex: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.guide-body {
+  padding: 0 22px 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.guide-h4 {
+  margin: 20px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.guide-h4:first-child {
+  margin-top: 0;
+}
+.guide-p {
+  margin: 0 0 10px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+.guide-p b {
+  color: var(--text);
+}
+.guide-p code,
+.guide-tip code,
+.guide-warn code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.92em;
+  color: var(--text);
+}
+.guide-steps {
+  margin: 0 0 12px;
+  padding-left: 22px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.guide-steps li {
+  margin-bottom: 4px;
+}
+.guide-steps b {
+  color: var(--text);
+}
+.guide-list {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.guide-list li {
+  margin-bottom: 6px;
+}
+.guide-list b {
+  color: var(--text);
+}
+.guide-tip,
+.guide-warn {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.guide-tip {
+  background: rgba(90, 160, 255, 0.08);
+  border-left: 3px solid rgba(90, 160, 255, 0.6);
+}
+.guide-warn {
+  background: rgba(255, 170, 60, 0.08);
+  border-left: 3px solid rgba(255, 170, 60, 0.65);
+}
+.guide-tip strong,
+.guide-warn strong {
+  flex: none;
+  color: var(--text);
+}

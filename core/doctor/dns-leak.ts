@@ -5,7 +5,10 @@ import type { CheckResult, FetchFn } from './types.js';
  *
  * 有三层保护机制, 检测必须逐层考虑, 否则会误报:
  *
- * 1. **网卡 DNS 接管**: 把物理网卡 DNS 改成 198.18.0.2 / fdfe:dcba:9876::2
+ * 1. **网卡 DNS 接管**: 把物理网卡 DNS 改成 198.18.0.2
+ *    (现行实现只接管 IPv4, 物理网卡的 IPv6 DNS 保持 DHCP 下发 —— 见
+ *     core/runtime/sysdns.ts 的 buildApplyScript; v6 侧靠 TUN 的 dns-hijack 兜住。
+ *     历史备份里可能仍带 fdfe:dcba:9876::2, 所以 isTunnelDns 两种地址都认。)
  * 2. **TUN dns-hijack**: mihomo 的 `dns-hijack: ["any:53"]` 会劫持
  *    **任何**发往 53 端口的查询, 无论目标是哪个 DNS 服务器
  * 3. **HTTP 出口地区对照**: 作为最终佐证

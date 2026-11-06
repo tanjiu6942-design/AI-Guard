@@ -11,6 +11,7 @@ import {
   type TimezoneStatus,
   type DetectedTimezone,
 } from "./ipc";
+import Guide from "./panels/Guide";
 
 const MODES: { value: Mode; title: string; detail: string }[] = [
   {
@@ -34,6 +35,7 @@ const pages = [
   { key: "settings", label: "连接配置", mark: "02" },
   { key: "doctor", label: "网络体检", mark: "03" },
   { key: "logs", label: "日志与规则", mark: "04" },
+  { key: "guide", label: "使用指南", mark: "05" },
 ];
 const LABEL = { ok: "通过", fail: "失败", warn: "注意", unknown: "未知" };
 const PROTECTION_LABEL = {
@@ -152,6 +154,17 @@ export default function App() {
       if (success) setNotice({ text: success });
       await refresh();
     } catch (e) {
+      /**
+       * 失败时必须把界面拉回磁盘真值。
+       *
+       * 否则会出现"界面说改了、磁盘没改"的撒谎状态：用户取消勾选 ->
+       * 保存被拒（例如内核还在跑）-> 只弹一句红字，而复选框**仍保持用户
+       * 改过的样子** -> 用户以为生效了 -> 启动内核读到的还是旧值。
+       *
+       * 实测(2026-11-07)为此困惑了两轮：界面显示实时保护已关闭，
+       * 实际一直在运行。
+       */
+      try { setSettings(await api.settings()); } catch { /* 读不到就保持原状 */ }
       setNotice({ text: message(e), bad: true });
     } finally {
       setBusy(false);
@@ -376,7 +389,7 @@ export default function App() {
         </div>
       </dl>
       <p className="hint">
-        本机状态每 5 秒、出口每 15 秒、完整体检每 60 秒检查一次；这是周期监测，无法保证无间隙防护。窗口隐藏后仍继续运行。
+        本机状态与出口每 15 秒、完整体检每 60 秒检查一次；链路健康时自动降频（出口 45 秒、完整体检 180 秒），出现异常立即回到高频。这是周期监测，无法保证无间隙防护。窗口隐藏后仍继续运行。
       </p>
     </section>
   );
@@ -1034,6 +1047,7 @@ export default function App() {
               </section>
             </>
           )}
+          {page === "guide" && <Guide />}
         </div>
       </main>
     </div>

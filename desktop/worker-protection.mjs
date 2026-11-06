@@ -100,12 +100,23 @@ export class WorkerProtection {
    * 所以: 配置本来就不是隔离态时, 跳过这次多余的重载。
    */
   async unblock(valid = () => true) {
+    /**
+     * `configure(false)` 是否真的成功切到了正常态。
+     *
+     * 这个标记决定 catch 里要不要重新下发隔离配置 —— 必须依据**实际发生的事**，
+     * 而不是进入前的快照（进入前通常是隔离态，据此判断会变成"总是重载"）。
+     */
+    let configReleased = false;
     try {
       if (!valid()) throw Error('恢复已被新的异常取消');
       if (this.blockedConfig !== false) {
         await this.configure(false);
         this.blockedConfig = false;
+        configReleased = true;
         if (!valid()) throw Error('恢复已被新的异常取消');
+      } else {
+        // 本来就不是隔离态（启动即正常态的设计），无需切配置
+        configReleased = true;
       }
       // 只要隔离过就摘除系统规则 —— 用自己跟踪的状态, 不依赖 guard.status()
       // (后者在 fixture / 部分实现下可能不反映真实锁态)。
@@ -115,8 +126,28 @@ export class WorkerProtection {
         if (!valid()) throw Error('恢复已被新的异常取消');
       }
     } catch (e) {
-      // Never leave the local proxy as a bypass when removing system rules failed.
-      await this.block().catch(() => {});
+      /**
+       * 摘规则失败时**必须**保证业务配置回到隔离态，否则会留下
+       * "系统规则没了、流量却放行"的绕过窗口。安全语义不能丢。
+       *
+       * 但补隔离不等于要重新下发配置：`block()` 内含 `configure(true)`，
+       * 那是一次 PUT /configs **热重载**，内核会拆掉并重建 TUN 网卡与接管路由；
+       * 重建窗口内下一轮检测又读到中间态 -> 判 fail -> trip()。
+       * 这正是 PROJECT_NOTES 坑 23 里"检测全绿后约 43 秒突然断流"的成因
+       * （实测三次断流触发时刻全部落在 configure 重载上）。
+       *
+       * 所以按实际情况分开处理：
+       *   - configure(false) 没成功（配置仍在隔离态）：只需补回 WFP 规则，
+       *     不需要再下发一次隔离配置 —— 那纯属多一次热重载。
+       *   - configure(false) 成功了但摘规则失败：配置已放行，
+       *     必须重新下发隔离配置，这次热重载是安全所必需的。
+       */
+      if (!configReleased) {
+        // 配置仍在隔离态，只补系统级规则，避免多余重载。
+        try { await this.guard.lock(this.kernelPath); this.guardLocked = true; } catch { /* 交由调用方处理 */ }
+      } else {
+        await this.block().catch(() => {});
+      }
       throw e;
     }
   }

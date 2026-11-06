@@ -33,3 +33,7 @@ nsis:
   shortcutName: AI Guard
   deleteAppDataOnUninstall: false
   artifactName: AI-Guard-Setup-${version}-${arch}.${ext}
+  # 应急入口必须用户找得到。2026-11-06 的事故里, WFP 规则锁死整机网络,
+  # 而用户不知道 resources/guard-filter/emergency-unlock.cmd 的存在,
+  # 最后只能还原系统。这个快捷方式直接指向该脚本(脚本自身会请求管理员)。
+  include: build/emergency-unlock-shortcut.nsh

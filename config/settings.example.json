@@ -12,5 +12,5 @@
   "secret": "换成一个随机字符串",
   "homeRegion": "CN",
   "tunEnabled": false,
-  "mihomoPath": "D:\\tools\\早期实现\\resources\\mihomo.exe"
+  "mihomoPath": ""
 }
