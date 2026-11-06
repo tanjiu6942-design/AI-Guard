@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 安装界面依赖
+        run: npm --prefix gui ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 编译界面
+        run: npm --prefix gui run build
+
+      - name: 运行测试
+        run: npm test
+        # e2e-config.test.ts 需要真实 mihomo，CI 上不提供 —— 该用例条件跳过。
