@@ -94,7 +94,7 @@ Start TUN listening error: configure tun interface: Access is denied.
 15. Tauri Rust 后端与 IPC
 16. README 与收尾
 
-最终：**282 个用例（282 passed + 0 skipped）**
+最终：**371 个用例（371 passed + 1 skipped）**
 
 ---
 
@@ -859,7 +859,7 @@ aiguard/
 │   ├── build-guard-filter.mjs   构建并自检 guard-filter
 │   ├── prepare-desktop.mjs      暂存 vendor/mihomo
 │   └── desktop-smoke.cjs        真机冒烟 + 崩溃回收
-├── tests/                   282 个用例
+├── tests/                   371 个用例
 ├── gui/                     Electron 前端（src/App.tsx 为实际界面）
 └── README.md
 ```
