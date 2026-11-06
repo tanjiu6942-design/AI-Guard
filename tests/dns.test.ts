@@ -7,7 +7,8 @@ describe('DNS 策略', () => {
     expect(dns.nameserver).toEqual(['https://1.1.1.1/dns-query#AI Guard 专用']);
     // 国内域名交给系统解析器直连：公共 DoH 最终仍由运营商递归，
     // 会被泄漏检测站判成"中国 DNS 泄漏"（实测 112.25.12.136 等）。
-    expect(dns['nameserver-policy']['geosite:cn']).toEqual(['system#DIRECT', '223.5.5.5']);
+    // 加密 DoH：ISP 看不到国内域名查询内容（system#DIRECT 会明文暴露给 ISP）
+    expect(dns['nameserver-policy']['geosite:cn']).toEqual(['https://223.5.5.5/dns-query', 'https://doh.pub/dns-query']);
     expect(dns['nameserver-policy']['sub.example.com']).toEqual(['223.5.5.5']);
     expect(dns['nameserver-policy']['.sub.example.com']).toBeUndefined();
     expect(dns['proxy-server-nameserver']).toEqual(['223.5.5.5', '119.29.29.29']);

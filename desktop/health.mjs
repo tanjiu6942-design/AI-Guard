@@ -11,7 +11,7 @@ export function checkDnsPolicy(dns, sourceHost) {
   if (!dns) return item('dns-policy', 'DNS 上游策略', 'unknown', '无法读取已加载的 DNS 上游配置', false);
   const protectedResolvers = new Set(['https://1.1.1.1/dns-query#AI Guard 专用']);
   const protectedList = values => Array.isArray(values) && values.length > 0 && values.every(v => protectedResolvers.has(v));
-  const cnResolvers = new Set(['system#DIRECT', '223.5.5.5']);
+  const cnResolvers = new Set(['https://223.5.5.5/dns-query', 'https://doh.pub/dns-query']);
   const policies = Object.entries(dns['nameserver-policy'] || {});
   const safe = dns.enable === true && protectedList(dns.nameserver)
     && !dns.fallback?.length && !dns['direct-nameserver']?.length

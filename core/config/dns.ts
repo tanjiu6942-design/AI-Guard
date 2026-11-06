@@ -72,10 +72,22 @@ export function buildDns(
    * 安全性不受影响：+ 国内域名本来就要走 DIRECT，解析结果只用于直连，
    * 不涉及 AI 域名；AI 与海外域名仍由 nameserver-policy 的其它条目走住宅加密 DNS。
    */
-  // 首选系统解析器（校园网/运营商真实 DNS），失败时回退阿里明文 DNS。
-  // 都用直连：内核自身出站 socket 绑定 interface-name 指定的物理网卡，
-  // 不会命中 TUN 的 dns-hijack，因此不会形成解析回环。
-  policy['geosite:cn'] = ['system#DIRECT', '223.5.5.5'];
+  /**
+   * 国内域名使用加密 DoH（直连），不用 system#DIRECT。
+   *
+   * 为什么不用 system#DIRECT：那会把国内域名的解析明文交给本地 ISP 的
+   * 递归服务器，运营商能看到你访问的每一个国内站点。实测在热点下解析器
+   * 直接暴露为本地联通 DNS（61.163.252.70 / 2408:8001:100:3003::3）。
+   *
+   * 用 DoH 后：本地 ISP 只能看到一条到阿里/腾讯的加密 HTTPS 连接，
+   * 看不到具体域名。两个 DoH 互为回退，避免单个服务不可用导致解析失败。
+   * 两者都由自己的递归基础设施解析，不会转发给本地 ISP。
+   *
+   * 注意：泄漏检测站仍可能把阿里/腾讯的解析器标为"中国 DNS" —— 只要用
+   * 国内解析器就躲不掉，除非把国内域名也送去住宅链路（那会让国内 CDN
+   * 返回海外节点，站点明显变慢）。这里选的是"隐去 ISP 视角"而非"完全隐身"。
+   */
+  policy['geosite:cn'] = ['https://223.5.5.5/dns-query', 'https://doh.pub/dns-query'];
 
   return {
     enable: true,
