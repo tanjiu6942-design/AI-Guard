@@ -1,5 +1,6 @@
 # AI Guard
 
+[![CI](https://github.com/tanjiu6942-design/aiguard/actions/workflows/ci.yml/badge.svg)](https://github.com/tanjiu6942-design/aiguard/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-blue)
 

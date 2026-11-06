@@ -149,7 +149,9 @@ export class DesktopService {
         if (!this.worker.running) {
           requireConnection(s);
           if (s.realtimeProtection === false) throw Error('请先退出遗留断流，再启用实时保护与 TUN');
-          await ensureNetworkReady();
+          // 与 start 同理：本机被自己的 WFP 规则锁着时，裸网探测必然全部失败，
+          // 前置门必须让路，否则「要解锁必须先出网」的死锁会在这里重演。
+          await ensureNetworkReady({ selfLocked: await this.selfLocked() });
           await this.worker.start(s);
         }
         return this.worker.resumeProtection();

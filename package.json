@@ -21,6 +21,15 @@
   "main": "desktop/main.cjs",
   "description": "AI Guard Windows network desktop client",
   "author": "AI Guard",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tanjiu6942-design/aiguard.git"
+  },
+  "homepage": "https://github.com/tanjiu6942-design/aiguard#readme",
+  "bugs": {
+    "url": "https://github.com/tanjiu6942-design/aiguard/issues"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "electron": "45.2.1",

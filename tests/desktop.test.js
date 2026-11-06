@@ -142,6 +142,10 @@ describe("desktop service", () => {
       reload: async () => {
         throw Error("reload rejected");
       },
+      // service.start / resumeProtection 会先问"本机是否被自己锁住"。
+      // 不提供桩就会真的去 execFile guard-filter.exe ——
+      // 在 CI 或本机进程繁忙时导致 5s 用例超时（已实测 flaky）。
+      guardForRecovery: () => ({ status: async () => ({ locked: false, complete: true, filterCount: 0 }) }),
     };
     const service = new DesktopService({
       dataDir: dir,
