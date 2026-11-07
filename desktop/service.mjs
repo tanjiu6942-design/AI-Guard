@@ -157,6 +157,14 @@ export class DesktopService {
         return this.worker.resumeProtection();
       case 'releaseProtection':
         return this.worker.recover(s);
+      /**
+       * 一键修复：解除异常退出导致的整机断网。
+       *
+       * 与 releaseProtection 的区别：那条是"退出保护"的正常流程，
+       * 这条是救援 —— 不依赖 worker 存活，也不受当前保护阶段限制。
+       */
+      case 'repairNetwork':
+        return this.worker.repairNetwork();
       case 'shutdown':
         // 正常退出程序: 释放保护, 不保留断流。
         //

@@ -77,6 +77,15 @@ export interface DetectedTimezone {
   windowsId: string;
   source: string;
 }
+/** 一键修复的结果。界面据此直接给出结论，不需要自己推断。 */
+export interface RepairResult {
+  /** 整体是否成功（防火墙已确认解除，或本来就没锁）。 */
+  ok: boolean;
+  /** 本次是否真的解除了锁定。false 表示本来就没锁。 */
+  unlocked: boolean;
+  /** 失败原因；成功时为 null。 */
+  error: string | null;
+}
 export interface DesktopAPI {
   nodes(): Promise<NodeStatus>;
   selectNode(name: string): Promise<NodeStatus>;
@@ -91,6 +100,8 @@ export interface DesktopAPI {
   stop(): Promise<void>;
   resumeProtection(): Promise<void>;
   releaseProtection(): Promise<void>;
+  /** 一键修复：解除异常退出导致的整机断网。不依赖内核存活。 */
+  repairNetwork(): Promise<RepairResult>;
   setMode(mode: Mode): Promise<Mode>;
   doctor(): Promise<CheckResult[]>;
   logs(n: number): Promise<string[]>;

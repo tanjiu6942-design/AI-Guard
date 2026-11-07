@@ -37,6 +37,13 @@ export async function runSmoke({ app, win, service, dataDir }) {
     assert.equal(await js("typeof window.require"), "undefined");
     assert.equal(win.webContents.getLastWebPreferences().sandbox, true);
     check("sandboxed local renderer and preload IPC");
+    // 一键修复入口必须常驻在概览页，且不依赖内核是否运行。
+    assert.ok(await js("!!document.querySelector('.repair-button')"));
+    assert.ok(
+      await js("document.querySelector('.repair-card').textContent.includes('一键修复网络')"),
+    );
+    assert.equal(await js("document.querySelector('.repair-button').disabled"), false);
+    check("one-click network repair entry is always visible on overview");
     await shot("overview");
     const realTimezones = service.timezones;
     let fixtureTimezone = { current: 'China Standard Time', original: null,

@@ -72,6 +72,8 @@ export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 一键修复进行中：单独一个标记，避免与普通 busy 共用导致按钮闪回。 */
+  const [repairing, setRepairing] = useState(false);
   const [notice, setNotice] = useState<{ text: string; bad?: boolean } | null>(
     null,
   );
@@ -283,6 +285,34 @@ export default function App() {
                 ? "启动或连接异常"
                 : "尚未启动";
   const currentMode = MODES.find((m) => m.value === status?.mode) ?? MODES[0];
+  /**
+   * 一键修复：解除软件异常退出导致的整机断网。
+   *
+   * 不走 act()，因为它需要在失败时保留具体错误文案（act 会统一成通用消息），
+   * 而且修复结果本身就是给用户看的结论，要原样呈现。
+   */
+  async function repairNetwork() {
+    setRepairing(true);
+    setNotice(null);
+    try {
+      const result = await api.repairNetwork();
+      if (result.ok) {
+        setNotice({
+          text: result.unlocked
+            ? "已解除系统断流，网络应已恢复。如果仍无法上网，请重启电脑后再试。"
+            : "系统断流本就没有生效，无需修复。",
+        });
+      } else {
+        setNotice({ text: result.error ?? "一键修复失败，请查看日志", bad: true });
+      }
+      invalidateChecks();
+      await refresh();
+    } catch (e) {
+      setNotice({ text: message(e), bad: true });
+    } finally {
+      setRepairing(false);
+    }
+  }
   async function runDoctor() {
     const generation = ++checkGeneration.current;
     invalidateChecks(false);
@@ -493,6 +523,30 @@ export default function App() {
         <div key={page} className="page-body">
           {page === "overview" && (
             <>
+              {/*
+                一键修复：常驻在概览页最上方。
+                故障场景可能是 worker 已死、界面看起来"正常"但整机没网，
+                这时断流告警区根本不会出现 —— 所以这个入口不能只挂在告警里。
+              */}
+              <section className="card repair-card">
+                <div className="repair-row">
+                  <div>
+                    <strong>整台电脑突然没网了？</strong>
+                    <p className="hint">
+                      软件异常退出后，安全规则可能残留并拦住所有程序上网（WiFi
+                      显示已连接但打不开网页，重启电脑也无效）。点右侧按钮即可解除，
+                      只需管理员授权，不影响其他软件。
+                    </p>
+                  </div>
+                  <button
+                    className="repair-button"
+                    disabled={repairing}
+                    onClick={() => void repairNetwork()}
+                  >
+                    {repairing ? "修复中…" : "一键修复网络"}
+                  </button>
+                </div>
+              </section>
               <section
                 className={`connection-hero ${protectionHealthy ? "connected" : protectionLocked || protectionPhase === "locking" ? "interrupted" : ""}`}
               >

@@ -349,4 +349,76 @@ export class WorkerClient {
       elevation: this.elevation,
     }));
   }
+
+  /**
+   * 一键修复：软件异常退出后整机断网的紧急自救。
+   *
+   * 与 recover() 的区别：
+   *   - recover() 是「退出保护」的正常路径，失败时抛异常，语义是"停止并复位"
+   *   - repairNetwork() 是**救援**路径：不管当前处于什么状态（包括 lock_failed、
+   *     worker 已死、状态文件与实际不符），都尽力把 WFP 解除，并把结果结构化
+   *     返回给界面，由界面直接展示"修好了/还差什么"
+   *
+   * 为什么必须存在这个独立入口 —— 现场(2026-11-07)：
+   *   block() 的 guard.lock() 成功、configure(true) 超时失败 -> phase: lock_failed。
+   *   WFP 4 条 Persistent 规则已生效，配置文件却还是正常态，内核又已退出。
+   *   用户面对的是"WiFi 连着、完全没网"，而界面上没有一个明确告诉他
+   *   "点这里就能修好"的按钮。
+   *
+   * 设计要点：
+   *   1. **绝不依赖 worker 存活** —— worker 死了正是要救的场景，一律走 UAC 提权
+   *   2. 不抛异常，返回 { ok, unlocked, error, native }，让界面如实显示
+   *   3. 幂等：本来没锁也返回成功，只是 unlocked=false
+   *   4. 清空状态文件，避免下次启动误判「上次断流未解除」
+   */
+  async repairNetwork() {
+    const guard = this.guardForRecovery();
+    let native = null;
+
+    // 读真实锁态：WFP 是独立于本进程的内核态对象，只有它说了算。
+    try {
+      native = await guard.status();
+    } catch (e) {
+      const error = `无法读取系统防火墙状态：${e.message}`;
+      this.protection = { ...emptyProtection(), phase: 'lock_failed', reason: '系统断流仍未解除', error };
+      this.onProtection?.(this.protection);
+      return { ok: false, unlocked: false, error, native: null };
+    }
+
+    let unlocked = false;
+    if (native.locked) {
+      try {
+        // 救援路径一律提权：主进程是 asInvoker，普通权限 unlock 必失败。
+        await guard.unlockEscalated();
+        unlocked = true;
+      } catch (e) {
+        const error = `解除系统断流失败：${e.message}`;
+        this.protection = { ...emptyProtection(), phase: 'lock_failed', reason: '系统断流仍未解除', error };
+        this.onProtection?.(this.protection);
+        return { ok: false, unlocked: false, error, native };
+      }
+
+      // 不轻信退出码，回读真实状态再确认一次。
+      try { native = await guard.status(); } catch { /* 读不到就用解锁前的快照 */ }
+      if (native?.locked) {
+        const error = '解除系统断流失败：解锁后规则依然生效';
+        this.protection = { ...emptyProtection(), phase: 'lock_failed', reason: '系统断流仍未解除', error };
+        this.onProtection?.(this.protection);
+        return { ok: false, unlocked: false, error, native };
+      }
+    }
+
+    // 复位本地状态，并清空状态文件，避免下次启动读到旧的 lock_failed。
+    this.running = false;
+    this.phase = 'stopped';
+    this.corePid = null;
+    this.error = null;
+    this.protection = emptyProtection();
+    try {
+      writeFileSync(join(this.dataDir, 'protection-state.json'), JSON.stringify(this.protection, null, 2));
+    } catch { /* 状态文件写不了不影响修复结果 */ }
+    this.onProtection?.(this.protection);
+
+    return { ok: true, unlocked, error: null, native };
+  }
 }

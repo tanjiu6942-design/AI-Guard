@@ -13,6 +13,7 @@ const methods = [
   "chooseKernel",
   'resumeProtection',
   'releaseProtection',
+  'repairNetwork',
   'nodes',
   'selectNode',
   'timezone',
