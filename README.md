@@ -84,9 +84,9 @@ node scripts/desktop-smoke.cjs 'release/win-unpacked/AI Guard.exe' --aiguard-smo
 
 AI 服务（尤其 Claude）的风控会检查网络指纹一致性。如果同一次会话里，出口 IP 在住宅 IP 和机场 IP 之间跳变，会被判定为异常。
 
-**真实案例**（本工具诞生的原因）：早期方案把 `chatgpt.com` / `claude.ai` 正确导向住宅 IP，但漏掉了 Cloudflare 的遥测域名 `a.nel.cloudflare.com`——它不在规则集里，于是回落到兜底规则走了机场 IP。实测比例 **13 次走机场、3 次走住宅**。结果是 ChatGPT 界面反复显示 `Reconnecting... waiting for network`，回复卡在「正在思考」。
+**立项时实测到的现象**：只把主域名（`chatgpt.com` / `claude.ai` 等）导向住宅 IP 是不够的。Cloudflare 的遥测域名 `a.nel.cloudflare.com` 不在规则集里，会回落到兜底规则走机场 IP。实测比例 **13 次走机场、3 次走住宅**。结果是 ChatGPT 界面反复显示 `Reconnecting... waiting for network`，回复卡在「正在思考」。
 
-AI Guard 的三种模式（`strict` 默认 / `precise` / `global`）都堵住了这个洞：
+AI Guard 从规则设计阶段起就把这类边缘链路纳入覆盖范围，三种模式（`strict` 默认 / `precise` / `global`）都堵住了这个洞：
 
 | | 严格模式（默认） | 精确模式 | 全局模式 |
 |---|---|---|---|
@@ -219,11 +219,12 @@ CLI 改的是 `settings.json`，重启内核后生效。
 
 ## 首次启用 TUN 的推荐顺序
 
-1. 旧的 TUN 客户端保持运行，本工具先以 `tunEnabled: false` 并行验证（不开 TUN，不抢路由）
-2. `bin/doctor.js` 全绿后，退出旧的 TUN 客户端
-3. 把 `tunEnabled` 改为 `true`，重启本工具
+1. 先以 `tunEnabled: false` 启动，仅在本地代理模式下验证配置（不开 TUN，不抢路由）
+2. 跑一次 `bin/doctor.js`，确认十项都通过
+3. 把 `tunEnabled` 改为 `true`，重启软件启用 TUN 接管
+4. 需要实时保护时，在体检全绿之后再开启
 
-> **两个 TUN 不能共存**。切换时必须先完全退出旧的 TUN 客户端。
+> **不要同时运行两个 TUN 实例**。接管系统路由的虚拟网卡只能有一个，否则会互相抢路由导致断网。
 
 ## 架构
 

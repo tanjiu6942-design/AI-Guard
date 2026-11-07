@@ -50,9 +50,9 @@ const sets = loadRuleSets(join(ROOT, 'rules', 'domains'));
 
 /**
  * 检查端口是否已被占用, 返回占用者的进程名(空串表示空闲)。
- * 之前没有这一步: 本机另一个代理程序 默认也用 7891, 谁先启动占住端口, 另一个
+ * 之前没有这一步: 本机其他程序可能也用 7891, 谁先启动占住端口, 另一个
  * 就绑不上 —— mihomo 只打一行 "bind: Only one usage of each socket address",
- * 进程照常"运行", 但流量实际走的是别人的代理, 极难排查。
+ * 进程照常"运行", 但流量实际走的是占用端口的另一个代理, 极难排查。
  */
 async function portOwner(port) {
   return new Promise((resolve) => {
