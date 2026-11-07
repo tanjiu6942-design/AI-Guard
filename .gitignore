@@ -16,7 +16,14 @@ release-*/
 AI Guard/
 
 # 第三方运行时：scripts/prepare-desktop.mjs 从本机暂存到这里
-vendor/
+# 但应急解锁脚本是项目交付物，必须入库（CI 的 tests/emergency-entry.test.js 会读它）。
+# gitignore 规则：被忽略目录下的文件，必须先逐层放行父目录，否则不会进入子目录匹配。
+# 35MB 的 .exe 仍不入库。
+vendor/*
+!vendor/guard-filter/
+vendor/guard-filter/*
+!vendor/guard-filter/emergency-unlock.cmd
+!vendor/guard-filter/EMERGENCY-UNLOCK.md
 
 # 旧 Tauri 实现
 gui/src-tauri/target/
