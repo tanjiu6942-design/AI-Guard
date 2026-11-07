@@ -29,11 +29,13 @@ describe('应急解锁入口', () => {
 
   it('脚本会自我提权, 而不是只打印一句"请以管理员身份运行"', () => {
     const s = source();
-    // 检测管理员身份
-    expect(s).toMatch(/net session/);
+    // 检测管理员身份：fltmc 比 net session 可靠（不受网络服务状态影响）
+    expect(s).toMatch(/fltmc/);
     // 不是管理员时用 UAC 重启自己
     expect(s).toMatch(/-Verb RunAs/);
     expect(s).toMatch(/%~f0/);
+    // 提权调用要绕过执行策略，否则部分机器的组策略会拦住
+    expect(s).toMatch(/-ExecutionPolicy Bypass/);
   });
 
   it('脚本调用 unlock, 并在失败时明确报错而不是假装成功', () => {
@@ -45,9 +47,19 @@ describe('应急解锁入口', () => {
 
   it('脚本只动 AI Guard 自己的规则与残留 DNS, 声明不碰其他配置', () => {
     const s = source();
-    expect(s).toContain('不会碰其他软件的防火墙规则');
+    expect(s).toContain('不会改动其他软件的防火墙规则');
     // 清理的是本软件的两个残留 DNS 值
     expect(s).toContain('198.18.0.2');
+    expect(s).toContain('fdfe:dcba:9876::2');
+  });
+
+  it('找不到 helper 时给出可操作的下一步, 而不是只说失败', () => {
+    const s = source();
+    // 脚本可能被单独拷走（如放 U 盘），必须告诉用户把它放到 exe 旁边
+    expect(s).toMatch(/aiguard-guard-filter\.exe/);
+    expect(s).toMatch(/同一个文件夹|同一目录/);
+    // 并提供拿不到文件时的退路
+    expect(s).toMatch(/卸载|实时保护/);
   });
 
   it('NSIS 用 electron-builder 认的钩子名 customInstall / customUnInstall', () => {

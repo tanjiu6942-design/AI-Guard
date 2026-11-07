@@ -13,8 +13,13 @@ export function readProtectionState(dataDir) {
 }
 
 export class WorkerProtection {
-  constructor({ guard, dataDir, settings, configure, controller, emit, probePort, probeSecret, check, log, getDnsConfig }) {
+  constructor({ guard, dataDir, settings, configure, controller, emit, probePort, probeSecret, check, log, getDnsConfig, isKernelAlive }) {
     Object.assign(this, { guard, dataDir, settings, configure, controller, emit, probePort, probeSecret, check, log, getDnsConfig });
+    /**
+     * 内核是否还活着。用于决定配置隔离失败时要不要回滚 WFP 锁定。
+     * 缺省认为存活（保守：保留封锁），由调用方注入真实判断。
+     */
+    this.isKernelAlive = typeof isKernelAlive === 'function' ? isKernelAlive : () => true;
     this.state = emptyProtection();
     /**
      * 当前内核配置是否处于"业务流量隔离"态 (rules 头部带 MATCH,REJECT)。
@@ -64,7 +69,42 @@ export class WorkerProtection {
       writeFileSync(join(this.dataDir, 'protection-diagnostic.json'), JSON.stringify({ at: new Date().toISOString(), items: this.snapshot().items, ...report }, null, 2));
       this.log?.(`断流诊断: ${JSON.stringify(report)}`);
     } catch { /* Diagnostics must not prevent enforcing the proxy lock. */ }
-    try { await this.configure(true, confirmed); this.blockedConfig = true; } catch (e) { errors.push(e.message); }
+    try {
+      await this.configure(true, confirmed);
+      this.blockedConfig = true;
+    } catch (e) {
+      errors.push(e.message);
+      /**
+       * 配置没能切到隔离态。要不要回滚 WFP 锁定，取决于**内核是否还活着**：
+       *
+       *   内核活着 -> 保留封锁。
+       *     此刻内核仍能出网，摘掉规则就可能让应用在"配置未隔离"的情况下
+       *     走直连泄漏真实 IP。这是原始的 fail-closed 契约。
+       *
+       *   内核已死 -> 必须回滚。
+       *     WFP 规则豁免的唯一对象不存在了，没有任何流量会经过内核。
+       *     继续锁着 = 纯粹的全网黑洞。
+       *
+       * 现场(2026-11-07)属于第二种：guard.lock() 成功、configure(true) 超时
+       * 失败、内核随后退出。结果是「WiFi 连着、什么都打不开、重启也无效」，
+       * 而界面没有任何入口告诉用户怎么救 —— 那次只能重装系统。
+       *
+       * 这不是 fail-closed，是 fail-stuck：既没保住安全（流量根本不经内核），
+       * 又剥夺了用户自救能力。
+       */
+      if (confirmed && !this.isKernelAlive()) {
+        try {
+          await this.guard.unlock();
+          this.guardLocked = false;
+          this.log?.('配置隔离失败且内核已退出，已回滚 WFP 锁定，系统网络恢复');
+        } catch (rollbackError) {
+          // 回滚也失败：保留 guardLocked=true，让界面与一键修复能识别真实状态
+          this.guardLocked = true;
+          this.log?.(`配置隔离失败且回滚失败：${rollbackError.message}`);
+          errors.push(`回滚锁定失败：${rollbackError.message}`);
+        }
+      }
+    }
     try { await this.controller('connections', { method: 'DELETE' }); } catch (e) { errors.push(e.message); }
     if (errors.length) throw Error(errors.join('；'));
   }

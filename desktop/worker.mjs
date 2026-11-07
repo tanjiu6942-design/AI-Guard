@@ -201,6 +201,15 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
           getDnsConfig: () => appliedDns,
           log,
           emit: value => { if (!socket.destroyed) socket.write(JSON.stringify({ event: 'protection', value }) + '\n'); },
+          /**
+           * 内核是否还活着。配置隔离失败时据此决定要不要回滚 WFP 锁定：
+           * 内核死了就没有任何流量经过它，继续锁着只会让整机断网。
+           *
+           * rawChild 尚未创建（启动早期）或已退出，两种情况都算"不存活"
+           * —— 启动早期还没开始隔离，不存在需要保护的在途流量。
+           */
+          isKernelAlive: () =>
+            !!rawChild && rawChild.exitCode === null && !rawChild.signalCode,
         });
         await protection.prepare(mihomo);
       }
