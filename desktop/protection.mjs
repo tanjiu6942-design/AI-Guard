@@ -39,6 +39,9 @@ export class ProtectionMonitor {
   }
   async start({ locked = false, reason = null } = {}) {
     this.active = true;
+    // Startup isolation survives an inconclusive check, even if phase is suspect.
+    // Only a successful full check followed by unlock may clear it.
+    this.releasePending = true;
     this.nextExit = this.now() + 15000;
     this.nextFull = this.now() + 60000;
     // 启动宽限期从此刻起算, 期间 TUN/IPv6 未就绪判 unknown 而非 fail
@@ -126,12 +129,12 @@ export class ProtectionMonitor {
   }
   tick(kind, release = false) {
     if (!this.active) return Promise.resolve(this.snapshot());
-    if (this.state.phase === 'checking' && kind !== 'full') return Promise.resolve(this.snapshot());
+    if (this.releasePending && kind !== 'full') return Promise.resolve(this.snapshot());
     const allowed = ['healthy', 'suspect', 'checking'].includes(this.state.phase);
     if (!allowed) return Promise.resolve(this.snapshot());
     const lane = kind === 'local' ? 'local' : 'network';
     if (this.flights.has(lane)) return this.flights.get(lane);
-    const startupRelease = this.state.phase === 'checking' && kind === 'full';
+    const startupRelease = this.releasePending && kind === 'full';
     const task = this.run(kind, startupRelease);
     this.flights.set(lane, task);
     task.finally(() => { if (this.flights.get(lane) === task) this.flights.delete(lane); });
@@ -201,6 +204,11 @@ export class ProtectionMonitor {
     this.state.checkedAt = this.iso();
     if (kind === 'full') this.state.fullCheckedAt = this.iso();
     const abnormal = accepted.filter(x => x.state !== 'ok');
+    // Reset each recovered item independently, including mixed-result rounds.
+    // Items absent from this sample retain their unresolved failure history.
+    for (const item of accepted) {
+      if (item.state === 'ok') this.failures.delete(item.key);
+    }
     const collectionFailed = collected.some(x => x.key === `collection-${kind}`);
     const actionable = abnormal;
     if (abnormal.length) {
@@ -235,7 +243,7 @@ export class ProtectionMonitor {
       // 否则只要阻断探测端点就能让「出口一致性」永远无法判断，形成 fail-open
       // （见 source-bypass 契约）。真正要治的是 unknown 的成因 —— 住宅链路连接被
       // 重置、前置节点抖动、探针超时过紧，这些都在健康探测侧修，而不是放宽判定。
-      const persistent = abnormal.every(x => (this.failures.get(x.key) ?? 0) >= 1);
+      const persistent = abnormal.some(x => (this.failures.get(x.key) ?? 0) >= 1);
       if (!release) {
         // 运行期周期检测：不受启动宽限期约束，连续两轮即锁
         if (persistent) return this.trip(reason);
@@ -260,7 +268,6 @@ export class ProtectionMonitor {
       return this.snapshot();
     }
     this.retry.delete(kind);
-    for (const item of accepted) this.failures.delete(item.key);
     if (release) {
       try {
         const valid = () => this.active && token === this.generation;
@@ -270,6 +277,7 @@ export class ProtectionMonitor {
           if (!valid()) await this.lock();
         });
         if (!this.active || token !== this.generation) return this.snapshot();
+        this.releasePending = false;
         this.failures.clear();
         this.retry.clear();
         this.emit({ phase: 'healthy', reason: null, error: null, lockedAt: null });

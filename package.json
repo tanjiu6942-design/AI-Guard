@@ -24,11 +24,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tanjiu6942-design/aiguard.git"
+    "url": "git+https://github.com/tanjiu6942-design/AI-Guard.git"
   },
-  "homepage": "https://github.com/tanjiu6942-design/aiguard#readme",
+  "homepage": "https://github.com/tanjiu6942-design/AI-Guard#readme",
   "bugs": {
-    "url": "https://github.com/tanjiu6942-design/aiguard/issues"
+    "url": "https://github.com/tanjiu6942-design/AI-Guard/issues"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

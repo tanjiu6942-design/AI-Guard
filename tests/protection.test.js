@@ -15,6 +15,66 @@ function fixture() {
 }
 afterEach(() => vi.useRealTimers());
 
+describe('protection regression scenarios', () => {
+  const uncertain = key => ({ ...good(key), state: 'unknown', critical: false });
+
+  it('actually unlocks after a slow inconclusive startup and a successful full retry', async () => {
+    vi.useFakeTimers();
+    const { monitor, deps } = fixture();
+    let isolated = true;
+    deps.unlock.mockImplementation(async () => { isolated = false; });
+    deps.check.mockImplementationOnce(async () => {
+      await new Promise(resolve => setTimeout(resolve, 35000));
+      return [uncertain('exit')];
+    });
+    try {
+      const starting = monitor.start();
+      await vi.advanceTimersByTimeAsync(35000);
+      await starting;
+      expect(isolated).toBe(true);
+      await monitor.tick('local');
+      expect(monitor.snapshot().phase).not.toBe('healthy');
+      expect(isolated).toBe(true);
+      await monitor.tick('full');
+      expect(monitor.snapshot().phase).toBe('healthy');
+      expect(isolated).toBe(false);
+    } finally { await monitor.shutdown(); }
+  });
+
+  it('does not count separated failures as consecutive when another item fails', async () => {
+    const { monitor, deps } = fixture();
+    try {
+      await monitor.start();
+      for (const items of [
+        [uncertain('exit'), good('long')],
+        [good('exit'), uncertain('long')],
+        [uncertain('exit'), good('long')],
+      ]) {
+        deps.check.mockResolvedValueOnce(items);
+        await monitor.tick('full');
+        expect(monitor.snapshot().phase).toBe('suspect');
+      }
+      expect(deps.lock).not.toHaveBeenCalled();
+      deps.check.mockResolvedValueOnce([good('exit'), good('long')]);
+      await monitor.tick('full');
+      expect(monitor.snapshot().phase).toBe('healthy');
+    } finally { await monitor.shutdown(); }
+  });
+
+  it('locks on a repeated failure even when a new abnormal item appears', async () => {
+    const { monitor, deps } = fixture();
+    try {
+      await monitor.start();
+      deps.check.mockResolvedValueOnce([uncertain('exit'), good('long')]);
+      await monitor.tick('full');
+      deps.check.mockResolvedValueOnce([uncertain('exit'), uncertain('long')]);
+      await monitor.tick('full');
+      expect(monitor.snapshot().phase).toBe('locked');
+      expect(deps.lock).toHaveBeenCalledTimes(1);
+    } finally { await monitor.shutdown(); }
+  });
+});
+
 describe('continuous protection', () => {
   it('only releases startup quarantine after a successful complete check', async () => {
     const { monitor, events } = fixture();
