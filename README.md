@@ -118,7 +118,7 @@ AI Guard 的三种模式（`strict` 默认 / `precise` / `global`）都堵住了
 1. **mihomo** v1.19.32 — 放 `%APPDATA%\aiguard\mihomo\mihomo.exe`，或在 `settings.json` 的 `mihomoPath` 字段填绝对路径
 2. **机场订阅** — 提供前置中转节点。**住宅 IP 从国内无法直连**（实测：绑物理网卡源地址 TCP 超时 12s，走 TUN 则 2ms 通），必须经此中转
 3. **住宅 SOCKS5** — 你的独享 IP 凭据
-4. **geodata 三件套** — `Country.mmdb` / `geoip.dat` / `geosite.dat`。程序会自动从 mihomo 同目录或 早期实现 安装目录复制；都没有则 mihomo 会联网下载（国内可能失败）
+4. **geodata 三件套** — `Country.mmdb` / `geoip.dat` / `geosite.dat`。程序会自动从 mihomo 同目录或运行目录复制；都没有则 mihomo 会联网下载（国内可能失败）
 
 ## 快速开始
 
@@ -217,14 +217,13 @@ CLI 改的是 `settings.json`，重启内核后生效。
 5. 断开住宅 IP → AI 网站应**连接失败**，而非回落直连
 6. 强杀主进程（`AI Guard.exe`，worker 仍在）→ 管道断开，worker 停止自己的内核并恢复网卡 DNS；若 worker 也被强杀或断电，则下次启动时从 `desktop-dns-backup.json` 恢复（需 UAC）
 
-## 从 早期实现 迁移
+## 首次启用 TUN 的推荐顺序
 
-1. 早期实现 到期前，保持它运行
-2. 本工具先以 `tunEnabled: false` 并行验证（不开 TUN，不抢路由）
-3. `bin/doctor.js` 全绿后，退出 早期实现
-4. 把 `tunEnabled` 改为 `true`，重启本工具
+1. 旧的 TUN 客户端保持运行，本工具先以 `tunEnabled: false` 并行验证（不开 TUN，不抢路由）
+2. `bin/doctor.js` 全绿后，退出旧的 TUN 客户端
+3. 把 `tunEnabled` 改为 `true`，重启本工具
 
-> **两个 TUN 不能共存**。切换时必须先完全退出 早期实现。
+> **两个 TUN 不能共存**。切换时必须先完全退出旧的 TUN 客户端。
 
 ## 架构
 
@@ -258,8 +257,8 @@ npm run typecheck  # tsc --noEmit
 ```
 
 `e2e-config.test.ts` 会调用真实 mihomo 做配置语法校验。`findMihomo()` 只查
-`%APPDATA%\aiguard\mihomo\`、`%LOCALAPPDATA%\Programs\早期实现\resources\`、
-`%LOCALAPPDATA%\Programs\aiguard\` 三处，**不查仓库内的 `vendor/mihomo/`**，
+`%APPDATA%\aiguard\mihomo\`、`%LOCALAPPDATA%\Programs\aiguard\mihomo.exe`
+两处，**不查仓库内的 `vendor/mihomo/`**，
 所以本地想跑这条用例要显式指定：
 
 ```powershell

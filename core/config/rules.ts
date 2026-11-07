@@ -43,7 +43,7 @@ const CLOUDFLARE_CATCH_ALL = [
 ];
 
 /**
- * 公共 DoH 域名 + 其 IP 地址 —— 从 早期实现 迁移过来的漏项。
+ * 公共 DoH 域名 + 其 IP 地址 —— 补齐早期规则集遗漏的防绕过项。
  *
  * 为什么需要单独处理:
  * TUN 的 `dns-hijack: any:53` 只能拦截 **53 端口** 的明文 DNS 查询。
@@ -51,7 +51,7 @@ const CLOUDFLARE_CATCH_ALL = [
  * 把这些域名/IP 收进专用组, 应用用 1.1.1.1/dns-query 解析时, 请求会
  * 从**机场 IP** 出去 —— 实测确认: 1.1.1.1 的请求 using 普通代理[美国S02]。
  *
- * 早期实现 用 `IP-CIDR,1.1.1.1/32,专用,no-resolve` 这类规则解决,
+ * 用 `IP-CIDR,1.1.1.1/32,专用,no-resolve` 这类规则把 DoH IP 收进专用组,
  * 这里连域名一起补, 覆盖面更全。
  */
 const DOH_DOMAINS = [

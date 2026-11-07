@@ -73,7 +73,7 @@ export function buildGroups(): ProxyGroup[] {
     },
     {
       // 自动选择: 在机场节点里按实测延迟选最快的。
-      // 从 早期实现 迁移 —— 它的「自动选择」组就是 url-test。
+      // 自动选择组用 url-test，在机场节点中挑延迟最低的。
       // 普通代理组可以手动选到它, 省去每次自己挑节点的麻烦。
       name: G_AUTO,
       type: 'url-test',

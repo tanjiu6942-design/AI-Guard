@@ -56,7 +56,7 @@ export function buildConfig(opts: BuildOptions): MihomoConfig {
     'find-process-mode': 'strict',
 
     // 并发建连: 同时向多个 IP 发起连接, 取最先成功的。
-    // 早期实现 也开了这个, 跨境链路下能明显降低首包延迟。
+    // 跨境链路下能明显降低首包延迟。
     'tcp-concurrent': true,
     // 统一延迟算法: 测速时发多次请求取平均, 避免单次抖动误判节点质量
     'unified-delay': true,

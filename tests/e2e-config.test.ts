@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { buildConfig } from '../core/config/builder';
 import { configToYaml, findMihomo, ensureGeodata, GEODATA_FILES } from '../core/runtime/mihomo';
 
-// mihomo 不一定装在 findMihomo() 的候选路径里 (例如随 早期实现 装到 D:\ 的自定义目录),
+// mihomo 不一定装在 findMihomo() 的候选路径里 (例如装到 D:\ 的自定义目录),
 // 所以允许用 AIGUARD_MIHOMO_PATH 显式指定; 两者都拿不到就跳过而不是失败。
 const mihomo = findMihomo() ?? (process.env.AIGUARD_MIHOMO_PATH || null);
 const hasMihomo = mihomo !== null && existsSync(mihomo);

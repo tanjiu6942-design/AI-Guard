@@ -36,12 +36,12 @@ const s = loadSettings(settingsPath);
 
 // mihomo 路径解析顺序: settings.mihomoPath (用户手动指定) → findMihomo() 自动查找
 // → AIGUARD_MIHOMO_PATH (测试用) → 报错退出。
-// findMihomo() 只覆盖硬编码候选目录, 用户把 早期实现 装在任意盘符时靠 mihomoPath 指定。
+// findMihomo() 只覆盖硬编码候选目录, 装在任意自定义位置时靠 mihomoPath 指定。
 const mihomo = s.mihomoPath || findMihomo() || process.env.AIGUARD_MIHOMO_PATH || '';
 if (!mihomo) {
   console.error('找不到 mihomo。请在 settings.json 的 mihomoPath 字段填上 mihomo.exe 的完整路径:');
   console.error(`  ${settingsPath}`);
-  console.error('  例如: { "mihomoPath": "D:\\\\tools\\\\早期实现\\\\resources\\\\mihomo.exe" }');
+  console.error('  例如: { "mihomoPath": "D:\\\\tools\\\\mihomo\\\\mihomo.exe" }');
   process.exit(1);
 }
 

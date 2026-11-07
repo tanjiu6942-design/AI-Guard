@@ -126,7 +126,6 @@ export function configToYaml(c: MihomoConfig): string {
 export function findMihomo(): string | null {
   const candidates = [
     join(process.env.APPDATA ?? homedir(), 'aiguard', 'mihomo', 'mihomo.exe'),
-    join(process.env.LOCALAPPDATA ?? homedir(), 'Programs', '早期实现', 'resources', 'mihomo.exe'),
     join(process.env.LOCALAPPDATA ?? homedir(), 'Programs', 'aiguard', 'mihomo.exe'),
   ];
   for (const p of candidates) {
@@ -150,19 +149,13 @@ export const GEODATA_FILES = ['Country.mmdb', 'geoip.dat', 'geosite.dat'] as con
  * 查找顺序 (每个文件独立查找, 找到即复制):
  *   1. workDir 里已有 → 直接复用
  *   2. mihomo 二进制同目录 → 复制
- *   3. %LOCALAPPDATA%\Programs\早期实现\resources\ → 复制
- *   4. 都找不到 → 返回 false (调用方决定报错还是让 mihomo 联网下载)
- *
- * 注意: 不硬编码 早期实现 的安装盘符, 用户到期卸载后不至于连带炸掉。
+ *   3. 都找不到 → 返回 false (调用方决定报错还是让 mihomo 联网下载)
  */
 export function ensureGeodata(workDir: string, mihomoPath?: string | null): boolean {
   mkdirSync(workDir, { recursive: true });
 
   const sourceDirs: string[] = [];
   if (mihomoPath) sourceDirs.push(dirname(mihomoPath));
-  sourceDirs.push(
-    join(process.env.LOCALAPPDATA ?? homedir(), 'Programs', '早期实现', 'resources'),
-  );
 
   for (const file of GEODATA_FILES) {
     const dest = join(workDir, file);

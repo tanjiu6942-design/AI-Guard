@@ -36,7 +36,7 @@ describe('代理组', () => {
     expect(front?.proxies ?? []).not.toContain('普通代理');
   });
 
-  it('含 url-test 自动选择组（从 早期实现 迁移）', () => {
+  it('含 url-test 自动选择组', () => {
     const groups = buildGroups();
     const auto = groups.find((g) => g.name === 'AI Guard 自动选择');
     expect(auto).toBeDefined();
