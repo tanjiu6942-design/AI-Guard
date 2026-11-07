@@ -19,19 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-第三方组件说明
-
-本项目运行时使用或分发以下第三方组件，它们各自遵循其原始许可证：
-
-- mihomo (MetaCubeX/mihomo) — GNU GPL v3
-  作为独立可执行程序随包分发（extraResources），本项目通过其控制接口调用，
-  不进行链接或修改。源码与许可证见 https://github.com/MetaCubeX/mihomo
-- Electron — MIT
-- React — MIT
-- meta-rules-dat (geodata: Country.mmdb / geoip.dat / geosite.dat) — GPL-3.0
-  见 https://github.com/MetaCubeX/meta-rules-dat
-
-本项目自身代码不包含上述组件的源码，仅按各自许可证的要求分发。

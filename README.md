@@ -334,5 +334,7 @@ npm test               # 全部用例（需先 npm run build）
 
 ## 许可证
 
-[MIT](LICENSE)。第三方组件（mihomo / geodata）遵循各自的 GPL 许可证，
-详见 LICENSE 末尾说明。
+本项目自身代码以 [MIT](LICENSE) 许可发布。
+
+随包分发的第三方组件（mihomo 内核、geodata 数据）遵循各自的 GPL-3.0 许可证，
+详见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
