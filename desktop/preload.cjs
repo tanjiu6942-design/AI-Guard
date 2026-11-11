@@ -14,6 +14,7 @@ const methods = [
   'resumeProtection',
   'releaseProtection',
   'repairNetwork',
+  'resumeAutoLock',
   'nodes',
   'selectNode',
   'timezone',

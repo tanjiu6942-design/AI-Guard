@@ -156,4 +156,42 @@ describe('一键修复: 解除异常退出导致的整机断网', () => {
       expect(guard.state.locked).toBe(false);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+
+  it('修复后不得谎报内核已停止(内核往往还活着, 只是链路断了)', async () => {
+    const dir = fixture();
+    try {
+      const guard = fakeGuard({ locked: true });
+      const c = client(dir, guard);
+      c.running = true;
+      c.phase = 'running';
+      c.corePid = 4242;
+
+      await c.repairNetwork();
+
+      // 内核还活着 -> 状态必须如实反映
+      expect(c.running).toBe(true);
+      expect(c.phase).toBe('running');
+      expect(c.corePid).toBe(4242);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('worker 还活着时, 修复必须先让它暂停自动断流', async () => {
+    const dir = fixture();
+    try {
+      const guard = fakeGuard({ locked: true });
+      const c = client(dir, guard);
+      const rpcs = [];
+      c.rpc = async (method) => { rpcs.push(method); };
+      c.socket = { write() {}, end() {} };
+
+      await c.repairNetwork();
+
+      // 关键: 必须发 suspendAutoLock, 否则解锁后会被立刻重新锁上
+      expect(rpcs).toContain('suspendAutoLock');
+      // 顺序: 暂停必须在解锁之前
+      expect(rpcs.indexOf('suspendAutoLock')).toBeLessThan(
+        guard.calls.indexOf('unlockEscalated'),
+      );
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });

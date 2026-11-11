@@ -25,8 +25,21 @@ export class ProtectionMonitor {
     this.retry = new Set();
     this.samples = new Map();
     this.effects = Promise.resolve();
+    /**
+     * 一键修复后暂停自动断流。
+     *
+     * 暂停期间照常检测、照常显示状态，但不再自动锁网。
+     * 原因见 suspendAutoLock() 的说明。
+     */
+    this.autoLockSuspended = false;
+    this.suspendReason = null;
   }
-  snapshot() { return structuredClone(this.state); }
+  snapshot() {
+    const state = structuredClone(this.state);
+    // 暂停状态要随快照一起上报，界面才能显示"自动断流已暂停"。
+    if (this.autoLockSuspended) state.suspended = true;
+    return state;
+  }
   emit(patch = {}) {
     Object.assign(this.state, patch);
     try { this.notify(this.snapshot()); } catch (e) { this.state.error = `状态提示失败：${e.message}`; }
@@ -36,6 +49,42 @@ export class ProtectionMonitor {
     const task = this.effects.then(fn);
     this.effects = task.catch(() => {});
     return task;
+  }
+
+  /**
+   * 暂停自动断流（只检测、不锁网）。
+   *
+   * 现场(2026-11-11)：用户点「一键修复网络」，WFP 确实解锁了，但住宅 SOCKS5
+   * 链路仍然是断的(exit=unknown / long=fail)。于是下一轮周期检测照样判失败，
+   * persistent 成立 -> trip() -> 重新 lock() -> 15 秒后又断网。
+   * 用户点多少次都没用，体感就是"按钮完全没用"。
+   *
+   * 根因不是解锁失败，而是**解锁没有停掉"会重新上锁的那个东西"**。
+   * 修复必须成对：解除规则 + 暂停自动断流。
+   *
+   * 暂停期间监控器继续检测（界面仍显示真实状态），但不再自动锁网。
+   * 用户修好链路后可以手动恢复，或重启软件重新开始。
+   */
+  suspendAutoLock(reason = '已执行一键修复，暂停自动断流直到链路恢复') {
+    this.autoLockSuspended = true;
+    this.suspendReason = reason;
+    ++this.generation;              // 作废在途的检测结果，避免它继续走 trip
+    this.failures.clear();
+    this.retry.clear();
+    // 已经处于锁定态时，暂停意味着"解除并保持不锁"。
+    if (this.state.phase === 'locked' || this.state.phase === 'locking') {
+      this.emit({ phase: 'suspect', reason, error: null });
+    }
+    return this.snapshot();
+  }
+
+  /** 恢复自动断流（链路修好后调用）。 */
+  resumeAutoLock() {
+    this.autoLockSuspended = false;
+    this.suspendReason = null;
+    this.failures.clear();
+    this.retry.clear();
+    return this.snapshot();
   }
   async start({ locked = false, reason = null } = {}) {
     this.active = true;
@@ -238,6 +287,17 @@ export class ProtectionMonitor {
        *    它仍受 fail-closed 约束: 连续两轮仍超时照样锁(见下方 persistent)。
        */
       const hardFailure = collected.some(x => x.key?.startsWith('collection-') && !x.timedOut);
+      /**
+       * 一键修复之后暂停了自动断流 -> 只报状态，不上锁。
+       *
+       * 否则用户会遇到"解锁 -> 15 秒后又被锁上"的死循环：
+       * 故障源(住宅链路断)还在，检测必然继续失败，persistent 必然成立。
+       * 现场(2026-11-11)用户点了很多次一键修复，每次都"没用"。
+       */
+      if (this.autoLockSuspended) {
+        this.emit({ phase: 'suspect', reason: `${reason}（已暂停自动断流，不会再自动锁定）`, error: null });
+        return this.snapshot();
+      }
       if (hasCriticalLeak || hardFailure) return this.trip(reason);
       // 连续第 2 轮仍异常。刻意不因 unknown 而放宽：连续 unknown 必须锁死，
       // 否则只要阻断探测端点就能让「出口一致性」永远无法判断，形成 fail-open
@@ -292,6 +352,16 @@ export class ProtectionMonitor {
   }
   trip(reason = '检测异常') {
     if (this.tripPromise) return this.tripPromise;
+    /**
+     * 一键修复之后暂停了自动断流 -> 拒绝上锁。
+     *
+     * 这是最后一道闸：即使有别的路径直接调 trip()，也不该重新锁网。
+     * 否则用户会陷入"解锁 -> 15 秒后又被锁上"的循环。
+     */
+    if (this.autoLockSuspended) {
+      this.emit({ phase: 'suspect', reason: `${reason}（已暂停自动断流，不会再自动锁定）`, error: null });
+      return Promise.resolve(this.snapshot());
+    }
     this.nextResume = this.now() + 10000;
     ++this.generation;
     // 真正锁定过一次: 之后的复检显示"已断流"而不是"检查中"

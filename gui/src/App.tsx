@@ -408,6 +408,23 @@ export default function App() {
       {protection?.reason && (
         <p className="hint monitor-reason">原因：{protection.reason}</p>
       )}
+      {protection?.suspended && (
+        <>
+          <p className="hint monitor-reason">
+            自动断流已暂停：后台仍在检测，但检测到异常不会再锁网。
+            链路恢复后请点「恢复自动断流」重新启用保护。
+          </p>
+          <div className="protection-actions">
+            <button
+              className="primary"
+              disabled={busy || checking || transitioning}
+              onClick={() => void act(() => api.resumeAutoLock())}
+            >
+              恢复自动断流
+            </button>
+          </div>
+        </>
+      )}
       <dl className="monitor-times">
         <div>
           <dt>最近检查</dt>

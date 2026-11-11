@@ -165,6 +165,9 @@ export class DesktopService {
        */
       case 'repairNetwork':
         return this.worker.repairNetwork();
+      /** 恢复自动断流（一键修复后暂停了它）。 */
+      case 'resumeAutoLock':
+        return this.worker.resumeAutoLock();
       case 'shutdown':
         // 正常退出程序: 释放保护, 不保留断流。
         //

@@ -34,6 +34,8 @@ export interface ProtectionStatus {
   lockedAt: string | null;
   items: CheckResult[];
   error?: string | null;
+  /** 一键修复后：自动断流已暂停，检测照常但不再上锁。 */
+  suspended?: boolean;
 }
 export interface Status {
   running: boolean;
@@ -102,6 +104,8 @@ export interface DesktopAPI {
   releaseProtection(): Promise<void>;
   /** 一键修复：解除异常退出导致的整机断网。不依赖内核存活。 */
   repairNetwork(): Promise<RepairResult>;
+  /** 恢复自动断流（一键修复后暂停了它）。 */
+  resumeAutoLock(): Promise<void>;
   setMode(mode: Mode): Promise<Mode>;
   doctor(): Promise<CheckResult[]>;
   logs(n: number): Promise<string[]>;

@@ -445,6 +445,21 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
           } else if (msg.method === 'resumeProtection') {
             if (!protection || !session.running) throw Error('请先启动实时保护内核');
             result = await protection.resume();
+          } else if (msg.method === 'suspendAutoLock') {
+            /**
+             * 一键修复的配套动作：暂停自动断流。
+             *
+             * 主进程解除了 WFP 规则，但故障源(住宅链路断)可能还在 ——
+             * 那样下一轮检测照样失败、persistent 照样成立、trip() 照样重新上锁，
+             * 用户点多少次修复都会在十几秒后再次断网(现场 2026-11-11)。
+             *
+             * 所以"解除规则"和"暂停自动断流"必须成对执行。
+             */
+            if (!protection) throw Error('实时保护未启动，无需暂停');
+            result = protection.suspendAutoLock('已执行一键修复，暂停自动断流');
+          } else if (msg.method === 'resumeAutoLock') {
+            if (!protection) throw Error('实时保护未启动');
+            result = protection.resumeAutoLock();
           } else if (msg.method === 'recheck') {
             if (!protection) throw Error('实时保护未启动');
             result = await protection.recheck();

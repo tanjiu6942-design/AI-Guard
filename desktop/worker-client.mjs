@@ -342,6 +342,22 @@ export class WorkerClient {
     this.onProtection?.(this.protection);
     return this.protection;
   }
+  /**
+   * 恢复自动断流。
+   *
+   * 一键修复会暂停监控器的自动断流（否则解锁后 15 秒又被重新锁上）。
+   * 链路修好后由用户点「恢复自动断流」重新启用。
+   */
+  async resumeAutoLock() {
+    if (this.socket) {
+      await this.rpc('resumeAutoLock');
+      return;
+    }
+    // worker 已死：没有监控器在跑，自然也不存在自动断流。
+    this.protection = emptyProtection();
+    this.onProtection?.(this.protection);
+  }
+
   guardForRecovery() {
     return this.guard || (this.guard = new WindowsGuard({
       executable: join(this.resources, 'guard-filter', 'aiguard-guard-filter.exe'),
@@ -374,6 +390,27 @@ export class WorkerClient {
   async repairNetwork() {
     const guard = this.guardForRecovery();
     let native = null;
+
+    /**
+     * 第一步：暂停自动断流（如果 worker 还活着）。
+     *
+     * 顺序很重要 —— 必须**先暂停、再解锁**。
+     *
+     * 现场(2026-11-11)：用户点「一键修复网络」，WFP 确实解锁了，但住宅 SOCKS5
+     * 链路仍然断着(exit=unknown / long=fail)。于是下一轮周期检测照样失败，
+     * persistent 判定成立 -> trip() -> 重新 lock() -> 十几秒后又断网。
+     * 用户点多少次都没用，体感就是"按钮完全没用"。
+     *
+     * 解锁与暂停必须成对，缺一不可。
+     */
+    if (this.socket) {
+      try {
+        await this.rpc('suspendAutoLock');
+      } catch (e) {
+        // 暂停失败不阻断修复 —— 解锁本身仍然有价值。
+        this.log?.(`暂停自动断流失败：${e.message}`);
+      }
+    }
 
     // 读真实锁态：WFP 是独立于本进程的内核态对象，只有它说了算。
     try {
@@ -408,10 +445,13 @@ export class WorkerClient {
       }
     }
 
-    // 复位本地状态，并清空状态文件，避免下次启动读到旧的 lock_failed。
-    this.running = false;
-    this.phase = 'stopped';
-    this.corePid = null;
+    /**
+     * 复位保护状态，但**不动内核的运行状态**。
+     *
+     * 现场(2026-11-11)：一键修复时内核往往还活着（controllerAvailable:true），
+     * 链路只是断了。之前这里无条件设 running=false / corePid=null，
+     * 会让界面误报"内核已停止"，用户以为软件没在工作。
+     */
     this.error = null;
     this.protection = emptyProtection();
     try {
