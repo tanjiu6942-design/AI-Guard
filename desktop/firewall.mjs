@@ -137,11 +137,24 @@ export class WindowsGuard {
     if (typeof this.elevation !== 'function') {
       throw new Error('需要管理员权限解除系统断流，但当前环境无法请求提权');
     }
-    const code = await this.elevation(this.command[0], [...this.command.slice(1), 'unlock']);
+    // 提权器可能返回 { code, output } 或直接返回数字；失败时抛出的异常
+    // 里带有 helper 的真实错误信息。
+    let result;
+    try {
+      result = await this.elevation(this.command[0], [...this.command.slice(1), 'unlock']);
+    } catch (e) {
+      // 提权器已经带了 helper 的真实原因（如"状态不完整"），直接透出，
+      // 不要用笼统的"防火墙错误"覆盖掉。
+      throw e;
+    }
+    const code = typeof result === 'number' ? result : (result?.code ?? 0);
     if (code !== 0) throw new Error(`解除系统断流失败（提权进程退出码 ${code}）`);
     const value = await this.status();
     if (value.locked || value.complete === false) {
-      throw new Error('Guard unlock left filters installed or incomplete');
+      // 状态不完整时把 helper 说的具体原因带出来，
+      // 而不是只说"没解干净"让用户无从下手。
+      const detail = value.errors?.length ? `：${value.errors.join('；')}` : '';
+      throw new Error(`Guard unlock left filters installed or incomplete${detail}`);
     }
     return value;
   }
