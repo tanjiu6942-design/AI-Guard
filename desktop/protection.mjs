@@ -72,8 +72,10 @@ export class ProtectionMonitor {
     this.failures.clear();
     this.retry.clear();
     // 已经处于锁定态时，暂停意味着"解除并保持不锁"。
-    if (this.state.phase === 'locked' || this.state.phase === 'locking') {
+    if (['locked', 'locking', 'lock_failed', 'recovering'].includes(this.state.phase)) {
       this.emit({ phase: 'suspect', reason, error: null });
+    } else {
+      this.emit();
     }
     return this.snapshot();
   }
@@ -84,6 +86,7 @@ export class ProtectionMonitor {
     this.suspendReason = null;
     this.failures.clear();
     this.retry.clear();
+    this.emit();
     return this.snapshot();
   }
   async start({ locked = false, reason = null } = {}) {

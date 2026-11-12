@@ -8,6 +8,10 @@ import {
   readFileSync,
   unlinkSync,
   appendFileSync,
+  statSync,
+  openSync,
+  readSync,
+  closeSync,
 } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -72,11 +76,42 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
   const logDir = join(dataDir, "mihomo");
   let workDir = logDir;
   mkdirSync(logDir, { recursive: true });
-  const log = (s) =>
-    appendFileSync(
-      join(logDir, "desktop.log"),
-      `[${new Date().toISOString()}] ${s}\n`,
-    );
+  const logPath = join(logDir, "desktop.log");
+  const MAX_LOG_BYTES = 10 * 1024 * 1024;
+  const KEEP_LOG_BYTES = 2 * 1024 * 1024;
+  let logBytes = 0;
+  const trimLogIfNeeded = () => {
+    try {
+      if (!existsSync(logPath)) {
+        logBytes = 0;
+        return;
+      }
+      const size = statSync(logPath).size;
+      logBytes = size;
+      if (size <= MAX_LOG_BYTES) return;
+      const fd = openSync(logPath, "r");
+      try {
+        const keep = Math.min(size, KEEP_LOG_BYTES);
+        const buf = Buffer.allocUnsafe(keep);
+        const read = readSync(fd, buf, 0, keep, size - keep);
+        const nl = buf.indexOf(0x0a);
+        const tail = nl >= 0 && nl + 1 < read ? buf.subarray(nl + 1, read) : buf.subarray(0, read);
+        writeFileSync(logPath, tail);
+        logBytes = tail.length;
+      } finally {
+        closeSync(fd);
+      }
+    } catch {}
+  };
+  trimLogIfNeeded();
+  const writeLogChunk = (chunk) => {
+    try {
+      appendFileSync(logPath, chunk);
+      logBytes += Buffer.byteLength(chunk);
+      if (logBytes > MAX_LOG_BYTES) trimLogIfNeeded();
+    } catch {}
+  };
+  const log = (s) => writeLogChunk(`[${new Date().toISOString()}] ${s}\n`);
   const backupPath = join(logDir, "desktop-dns-backup.json");
   const guard = new WindowsGuard({ executable: join(resources, 'guard-filter', 'aiguard-guard-filter.exe'), dataDir });
   let settings, rawChild, activeConfig, protection, probePort, probeSecret, controllerSecret;
@@ -262,12 +297,8 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
         spawnError = e;
         log(e.message);
       });
-      rawChild.stdout.on("data", (d) =>
-        appendFileSync(join(logDir, "desktop.log"), d),
-      );
-      rawChild.stderr.on("data", (d) =>
-        appendFileSync(join(logDir, "desktop.log"), d),
-      );
+      rawChild.stdout.on("data", (d) => writeLogChunk(d));
+      rawChild.stderr.on("data", (d) => writeLogChunk(d));
       return {
         pid: rawChild.pid,
         onExit: (fn) =>
@@ -456,7 +487,7 @@ export async function runWorker({ pipe, dataDir, resources, root, exit }) {
              * 所以"解除规则"和"暂停自动断流"必须成对执行。
              */
             if (!protection) throw Error('实时保护未启动，无需暂停');
-            result = protection.suspendAutoLock('已执行一键修复，暂停自动断流');
+            result = await protection.suspendAutoLock('已执行一键修复，暂停自动断流');
           } else if (msg.method === 'resumeAutoLock') {
             if (!protection) throw Error('实时保护未启动');
             result = protection.resumeAutoLock();

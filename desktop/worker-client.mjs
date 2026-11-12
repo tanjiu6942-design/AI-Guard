@@ -403,9 +403,10 @@ export class WorkerClient {
      *
      * 解锁与暂停必须成对，缺一不可。
      */
+    let suspendedState = null;
     if (this.socket) {
       try {
-        await this.rpc('suspendAutoLock');
+        suspendedState = await this.rpc('suspendAutoLock');
       } catch (e) {
         // 暂停失败不阻断修复 —— 解锁本身仍然有价值。
         this.log?.(`暂停自动断流失败：${e.message}`);
@@ -453,7 +454,9 @@ export class WorkerClient {
      * 会让界面误报"内核已停止"，用户以为软件没在工作。
      */
     this.error = null;
-    this.protection = emptyProtection();
+    this.protection = (this.socket && suspendedState?.phase)
+      ? suspendedState
+      : emptyProtection();
     try {
       writeFileSync(join(this.dataDir, 'protection-state.json'), JSON.stringify(this.protection, null, 2));
     } catch { /* 状态文件写不了不影响修复结果 */ }

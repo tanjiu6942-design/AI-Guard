@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ProtectionMonitor } from '../desktop/protection.mjs';
+import { readProtectionSnapshot } from '../desktop/health.mjs';
 
 /**
  * 回归: 「检测超时」曾被当成「确认泄漏」立刻断流。
@@ -120,5 +121,87 @@ describe('探测超时不等于确认泄漏', () => {
     expect(events).toContain('unlock');
     expect(monitor.snapshot().phase).toBe('healthy');
     await monitor.shutdown();
+  });
+
+  it('readProtectionSnapshot 子进程超时(killed/SIGTERM)标记 timedOut=true 且不泄漏 Base64 脚本，单轮不锁、连续两轮才锁', async () => {
+    const rawCmdError = Object.assign(
+      Error('Command failed: powershell.exe -NoProfile -NonInteractive -EncodedCommand CgAkAEUAcgByAG8AcgBBAGMAdABpAG8AbgBQAHIAZQBmAGUAcgBlAG4AYwBlACAAPQAgACcAUwB0AG8AcAAnAA=='),
+      { killed: true, signal: 'SIGTERM', code: null },
+    );
+    const execTimeout = (_file, _args, _opts, cb) => cb(rawCmdError, '', '');
+
+    let caught;
+    try {
+      await readProtectionSnapshot(execTimeout);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.timedOut).toBe(true);
+    expect(caught.message).not.toContain('CgAkAEUAcgBy');
+    expect(caught.message).toContain('超时');
+
+    // 接入 ProtectionMonitor：运行期单轮超时只进 suspect，连续第 2 轮才锁
+    let shouldTimeout = false;
+    const { monitor, events } = makeMonitor(async () => {
+      if (shouldTimeout) return readProtectionSnapshot(execTimeout);
+      return okItem();
+    });
+    try {
+      await monitor.start();
+      expect(monitor.snapshot().phase).toBe('healthy');
+      events.length = 0;
+
+      shouldTimeout = true;
+      await monitor.tick('local');
+      expect(events).not.toContain('lock');
+      expect(monitor.snapshot().phase).toBe('suspect');
+      expect(monitor.snapshot().reason).not.toContain('CgAkAEUAcgBy');
+
+      await monitor.tick('local');
+      expect(events).toContain('lock');
+      expect(monitor.snapshot().phase).toBe('locked');
+    } finally {
+      await monitor.shutdown();
+    }
+  });
+
+  it('readProtectionSnapshot 非超时失败不标记 timedOut，脱敏 Base64 且仍然立即锁定', async () => {
+    const rawCrashError = Object.assign(
+      Error('Command failed: powershell.exe -NoProfile -NonInteractive -EncodedCommand CgAkAEUAcgByAG8AcgBBAGMAdABpAG8AbgBQAHIAZQBmAGUAcgBlAG4AYwBlACAAPQAgACcAUwB0AG8AcAAnAA=='),
+      { killed: false, signal: null, code: 1 },
+    );
+    const execCrash = (_file, _args, _opts, cb) => cb(rawCrashError, '', '');
+
+    let caught;
+    try {
+      await readProtectionSnapshot(execCrash);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.timedOut).toBeFalsy();
+    expect(caught.message).not.toContain('CgAkAEUAcgBy');
+
+    const { monitor, events } = makeMonitor(async () => readProtectionSnapshot(execCrash));
+    await monitor.start();
+    expect(events).toContain('lock');
+    expect(monitor.snapshot().phase).toBe('locked');
+    await monitor.shutdown();
+  });
+
+  it('readProtectionSnapshot 并发调用复用在途采集，避免 local 与 full 同时拉起多个 PowerShell', async () => {
+    let spawns = 0;
+    let resolveExec;
+    const slowExec = (_file, _args, _opts, cb) => {
+      spawns++;
+      resolveExec = () => cb(null, JSON.stringify({ tunUp: true, dns: [], routes: [], processes: [], otherTun: [] }), '');
+    };
+    const p1 = readProtectionSnapshot(slowExec);
+    const p2 = readProtectionSnapshot(slowExec);
+    expect(spawns).toBe(1);
+    resolveExec();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toEqual(r2);
   });
 });

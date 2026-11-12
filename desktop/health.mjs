@@ -182,8 +182,8 @@ export function evaluateSystem(s, ownPid, options = {}) {
   ];
 }
 
-export function readProtectionSnapshot() {
-  const script = String.raw`
+const SNAPSHOT_TIMEOUT_MS = 15000;
+const SNAPSHOT_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $adapters = @(Get-NetAdapter)
@@ -192,8 +192,13 @@ $phys = @($adapters | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescrip
 $dns = @($phys | ForEach-Object { $a=$_; $servers=@(Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex | ForEach-Object { $_.ServerAddresses }); [pscustomobject]@{iface=$a.Name;servers=$servers} })
 $ips = @(Get-NetIPAddress -AddressFamily IPv6)
 $public = @($ips | Where-Object { $_.InterfaceIndex -in @($phys.ifIndex) -and $_.IPAddress -notmatch '^(fe80|fc|fd|::1)' })
-$interfaces = @(Get-NetIPInterface)
 $metrics = @{}
+foreach ($iface in @(Get-NetIPInterface)) {
+  if ($null -ne $iface.InterfaceMetric) {
+    $fam = if ([int]$iface.AddressFamily -eq 2) { 'ipv4' } else { 'ipv6' }
+    $metrics["$fam/$($iface.InterfaceIndex)"] = [int]$iface.InterfaceMetric
+  }
+}
 foreach ($family in @('ipv4','ipv6')) {
   $rows = @(netsh interface $family show interfaces)
   if ($LASTEXITCODE -ne 0) { throw 'Cannot read interface metrics' }
@@ -202,15 +207,14 @@ foreach ($family in @('ipv4','ipv6')) {
   }
 }
 $routes = @(Get-NetRoute | Where-Object { $_.State -ne 'Dead' } | ForEach-Object {
-  $r=$_; $im=($interfaces | Where-Object { $_.InterfaceIndex -eq $r.InterfaceIndex -and $_.AddressFamily -eq $r.AddressFamily } | Select-Object -First 1 -ExpandProperty InterfaceMetric)
+  $r = $_
   $family = if ([int]$r.AddressFamily -eq 2) { 'ipv4' } else { 'ipv6' }
   $key = "$family/$($r.InterfaceIndex)"
-  if ($metrics.ContainsKey($key)) { $im = $metrics[$key] }
-  if ($null -eq $im) { throw "Missing interface metric for $key" }
-  $im = [int]$im
+  if (-not $metrics.ContainsKey($key)) { throw "Missing interface metric for $key" }
+  $im = [int]$metrics[$key]
   [pscustomobject]@{ prefix=$r.DestinationPrefix; iface=$r.InterfaceAlias; routeMetric=[int]$r.RouteMetric; interfaceMetric=$im }
 })
-$processes = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'clash|mihomo|v2ray|xray|sing-box|hysteria|tuic|wireguard|openvpn|surge|quantumult' } | ForEach-Object { [pscustomobject]@{name=$_.Name;pid=$_.ProcessId} })
+$processes = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match 'clash|mihomo|v2ray|xray|sing-box|hysteria|tuic|wireguard|openvpn|surge|quantumult' } | ForEach-Object { [pscustomobject]@{name="$($_.ProcessName).exe";pid=[int]$_.Id} })
 [pscustomobject]@{
  tunUp=($tun.Count -eq 1); dns=$dns
  routes=$routes
@@ -221,11 +225,31 @@ $processes = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'cl
  otherTun=@($adapters | Where-Object { $_.Status -eq 'Up' -and $_.Name -ne 'Meta' -and $_.InterfaceDescription -match 'Mihomo|Clash|TUN|TAP|WireGuard' } | Select-Object -ExpandProperty Name)
 } | ConvertTo-Json -Compress -Depth 5
 `;
-  return new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-    { windowsHide: true, timeout: 12000, encoding: 'utf8' }, (error, out, err) => {
-      if (error) return reject(Error(`系统接管状态采集失败：${String(err || error.message).trim()}`));
+const SNAPSHOT_ENCODED = Buffer.from(SNAPSHOT_SCRIPT, 'utf16le').toString('base64');
+
+let inflightSnapshot = null;
+
+export function readProtectionSnapshot(execFn = execFile) {
+  if (inflightSnapshot) return inflightSnapshot;
+  const task = new Promise((resolve, reject) => execFn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', SNAPSHOT_ENCODED],
+    { windowsHide: true, timeout: SNAPSHOT_TIMEOUT_MS, encoding: 'utf8' }, (error, out, err) => {
+      if (error) {
+        const isTimeout = error.killed === true || error.signal === 'SIGTERM' || /timed?\s*out|ETIMEDOUT/i.test(String(error.code || error.message || ''));
+        if (isTimeout) {
+          const timeoutErr = Error(`系统接管状态采集超时（PowerShell 响应超过 ${SNAPSHOT_TIMEOUT_MS / 1000}s）`);
+          timeoutErr.timedOut = true;
+          return reject(timeoutErr);
+        }
+        const rawDetail = String(err || error.message || '')
+          .replace(/-EncodedCommand\s+[A-Za-z0-9+/=]+/gi, '-EncodedCommand <script>')
+          .trim();
+        return reject(Error(`系统接管状态采集失败：${rawDetail}`));
+      }
       try { resolve(JSON.parse(out.trim())); } catch { reject(Error('系统接管状态返回无效数据')); }
     }));
+  inflightSnapshot = task;
+  task.finally(() => { if (inflightSnapshot === task) inflightSnapshot = null; }).catch(() => {});
+  return task;
 }
 
 export function createHealthChecker({ settings, controller, probePort, corePid,

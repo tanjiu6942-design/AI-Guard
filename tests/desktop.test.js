@@ -10,6 +10,8 @@ import {
   rmSync,
   mkdirSync,
   writeFileSync,
+  truncateSync,
+  appendFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -301,5 +303,33 @@ describe("owned kernel lifecycle", () => {
     const { session } = fixture({ failRestore: true });
     await session.start(true);
     await expect(session.stop()).rejects.toThrow("DNS restore failed");
+  });
+});
+
+describe("desktop log tail reading on huge log files", () => {
+  it("reads the last N lines from a >600MB desktop.log in milliseconds without ERR_STRING_TOO_LONG or main-thread freeze", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aiguard-huge-log-"));
+    try {
+      const mihomoDir = join(dir, "mihomo");
+      mkdirSync(mihomoDir, { recursive: true });
+      const logPath = join(mihomoDir, "desktop.log");
+      writeFileSync(logPath, "header\n");
+      // 模拟实机 600MB+ 的超大 desktop.log（超过 V8 单字符串 512MB 上限 0x1fffffe8）
+      truncateSync(logPath, 600 * 1024 * 1024);
+      const expected = Array.from({ length: 250 }, (_, i) => `[2026-11-11] line-${i + 1}`);
+      appendFileSync(logPath, "\n" + expected.join("\n") + "\n", "utf8");
+
+      const svc = new DesktopService({ dataDir: dir, root: process.cwd(), worker: { running: false } });
+      const t0 = Date.now();
+      const lines = svc.logs(200).filter(Boolean);
+      const elapsed = Date.now() - t0;
+
+      expect(elapsed).toBeLessThan(200);
+      expect(lines.length).toBe(200);
+      expect(lines[0]).toBe("[2026-11-11] line-51");
+      expect(lines[199]).toBe("[2026-11-11] line-250");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

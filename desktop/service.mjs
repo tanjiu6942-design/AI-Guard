@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, openSync, fstatSync, readSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { loadSettings, saveSettings } from "../dist/core/settings.js";
@@ -62,11 +62,29 @@ export class DesktopService {
   }
   logs(n = 150) {
     const path = join(this.dataDir, "mihomo", "desktop.log");
-    return existsSync(path)
-      ? readFileSync(path, "utf8")
-          .split(/\r?\n/)
-          .slice(-Math.min(1000, Math.max(1, Number(n) || 150)))
-      : [];
+    if (!existsSync(path)) return [];
+    const limit = Math.min(1000, Math.max(1, Number(n) || 150));
+    const maxBytes = Math.min(512 * 1024, Math.max(128 * 1024, limit * 512));
+    let fd;
+    try {
+      fd = openSync(path, "r");
+      const { size } = fstatSync(fd);
+      if (size <= 0) return [];
+      const readLen = Math.min(size, maxBytes);
+      const offset = size - readLen;
+      const buf = Buffer.allocUnsafe(readLen);
+      const bytesRead = readSync(fd, buf, 0, readLen, offset);
+      const lines = buf.subarray(0, bytesRead).toString("utf8").split(/\r?\n/);
+      if (offset > 0 && lines.length > 1) lines.shift();
+      while (lines.length && lines[lines.length - 1] === "") lines.pop();
+      return lines.slice(-limit);
+    } catch {
+      return [];
+    } finally {
+      if (fd !== undefined) {
+        try { closeSync(fd); } catch {}
+      }
+    }
   }
   async call(method, payload) {
     const s = this.settings();

@@ -218,7 +218,13 @@ export class WorkerProtection {
      * 现在 pendingStates 里带出每一项的 state/detail, 以及最终是否 trip。
      */
     monitor.check = async (kind) => {
-      const items = await health(kind);
+      let items;
+      try {
+        items = await health(kind);
+      } catch (err) {
+        try { this.log?.(`检测[${kind}] 异常(timedOut=${!!err?.timedOut}): ${err?.message || err}`); } catch { /* 日志失败不得影响检测 */ }
+        throw err;
+      }
       try {
         const brief = items.map(x => `${x.key}=${x.state}${x.critical ? '!' : ''}`).join(' ');
         const bad = items.filter(x => x.state !== 'ok');
@@ -242,6 +248,19 @@ export class WorkerProtection {
       this.publish({ ...this.state, phase: 'locked', reason, lockedAt: new Date().toISOString() });
     } catch (e) { this.publish({ ...this.state, phase: 'lock_failed', reason, error: e.message }); }
     return this.snapshot();
+  }
+  async suspendAutoLock(reason) {
+    const state = this.monitor ? this.monitor.suspendAutoLock(reason) : this.snapshot();
+    this.guardLocked = false;
+    if (this.blockedConfig === true) {
+      await this.configure(false);
+      this.blockedConfig = false;
+    }
+    return state;
+  }
+  resumeAutoLock() {
+    if (!this.monitor) throw Error('实时保护未启动');
+    return this.monitor.resumeAutoLock();
   }
   resume() {
     if (!this.monitor) throw Error('请先启动内核，再复检恢复');

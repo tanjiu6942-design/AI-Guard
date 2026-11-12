@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProtectionMonitor } from '../desktop/protection.mjs';
+import { WorkerProtection } from '../desktop/worker-protection.mjs';
 
 /**
  * 回归(2026-11-11)：「一键修复网络」点了没有用。
@@ -109,6 +110,119 @@ describe('一键修复后不得被监控器立刻重新锁定', () => {
     } finally {
       monitor.active = false;
       await monitor.shutdown();
+    }
+  });
+
+  it('suspendAutoLock 将 locked/locking/lock_failed/recovering 转为 suspect 并发出通知', () => {
+    const notifications = [];
+    const monitor = new ProtectionMonitor({
+      check: async () => [],
+      lock: async () => {},
+      unlock: async () => {},
+      notify: (s) => notifications.push(s),
+    });
+
+    for (const phase of ['locked', 'locking', 'lock_failed', 'recovering']) {
+      notifications.length = 0;
+      monitor.state.phase = phase;
+      const snap = monitor.suspendAutoLock('测试暂停');
+      expect(snap.phase).toBe('suspect');
+      expect(snap.suspended).toBe(true);
+      expect(notifications.length).toBe(1);
+      expect(notifications[0].phase).toBe('suspect');
+      expect(notifications[0].suspended).toBe(true);
+    }
+  });
+
+  it('suspendAutoLock 在非锁定状态下也会 emit 带有 suspended 的快照', () => {
+    const notifications = [];
+    const monitor = new ProtectionMonitor({
+      check: async () => [],
+      lock: async () => {},
+      unlock: async () => {},
+      notify: (s) => notifications.push(s),
+    });
+    monitor.state.phase = 'ok';
+    const snap = monitor.suspendAutoLock('测试非锁定暂停');
+    expect(snap.phase).toBe('ok');
+    expect(snap.suspended).toBe(true);
+    expect(notifications.length).toBe(1);
+    expect(notifications[0].suspended).toBe(true);
+  });
+
+  it('resumeAutoLock 会调用 emit 通知已清除 suspended', () => {
+    const notifications = [];
+    const monitor = new ProtectionMonitor({
+      check: async () => [],
+      lock: async () => {},
+      unlock: async () => {},
+      notify: (s) => notifications.push(s),
+    });
+    monitor.suspendAutoLock('暂停');
+    notifications.length = 0;
+    const snap = monitor.resumeAutoLock();
+    expect(snap.suspended).toBeUndefined();
+    expect(notifications.length).toBe(1);
+    expect(notifications[0].suspended).toBeUndefined();
+  });
+
+  it('WorkerProtection.suspendAutoLock & resumeAutoLock 解除配置隔离并正确通知状态', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aiguard-suspend-'));
+    const configCalls = [];
+    const emitted = [];
+    const guard = {
+      async status() { return { locked: true, complete: true }; },
+      async check() {},
+      async lock() {},
+      async unlock() {},
+    };
+    const runtime = new WorkerProtection({
+      guard,
+      dataDir: dir,
+      settings: {},
+      configure: async (blocked) => { configCalls.push(blocked ? 'deny' : 'allow'); },
+      controller: async () => ({ proxies: {} }),
+      emit: (state) => { emitted.push(structuredClone(state)); },
+      check: async () => [{ key: 'exit', title: '出口', state: 'fail', detail: 'test fail' }],
+    });
+
+    try {
+      await runtime.prepare('C:\\fixture\\mihomo.exe');
+      await runtime.activate(1234);
+      // 触发锁定，进入 blockedConfig === true & guardLocked === true
+      await runtime.trip('模拟链路故障');
+      expect(runtime.blockedConfig).toBe(true);
+      expect(runtime.guardLocked).toBe(true);
+      expect(runtime.snapshot().phase).toBe('locked');
+
+      configCalls.length = 0;
+      emitted.length = 0;
+
+      // 执行 WorkerProtection.suspendAutoLock
+      const suspendedSnapshot = await runtime.suspendAutoLock('已执行一键修复，暂停自动断流');
+
+      // 验证 calls configure(false) to remove MATCH,REJECT
+      expect(configCalls).toEqual(['allow']);
+      // sets blockedConfig = false and guardLocked = false
+      expect(runtime.blockedConfig).toBe(false);
+      expect(runtime.guardLocked).toBe(false);
+      // sets suspended: true on snapshot and phase to 'suspect'
+      expect(suspendedSnapshot.suspended).toBe(true);
+      expect(suspendedSnapshot.phase).toBe('suspect');
+      expect(runtime.snapshot().suspended).toBe(true);
+      // emitted 包含了 suspended 的状态
+      expect(emitted.some((s) => s.suspended === true)).toBe(true);
+
+      emitted.length = 0;
+      // resumeAutoLock() clears suspended and emits the updated snapshot
+      const resumedSnapshot = runtime.resumeAutoLock();
+      expect(resumedSnapshot.suspended).toBeUndefined();
+      expect(runtime.snapshot().suspended).toBeUndefined();
+      expect(emitted.length).toBeGreaterThan(0);
+      expect(emitted[emitted.length - 1].suspended).toBeUndefined();
+    } finally {
+      await runtime.shutdown();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

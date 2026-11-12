@@ -194,4 +194,33 @@ describe('一键修复: 解除异常退出导致的整机断网', () => {
       );
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+
+  it('worker 存活并返回 suspended 快照时，repairNetwork 保留 suspended 状态而非复位为 off', async () => {
+    const dir = fixture();
+    try {
+      const guard = fakeGuard({ locked: true });
+      const c = client(dir, guard);
+      const suspendedSnap = {
+        phase: 'suspect',
+        reason: '已执行一键修复，暂停自动断流',
+        items: [],
+        suspended: true,
+      };
+      c.rpc = async (method) => {
+        if (method === 'suspendAutoLock') return suspendedSnap;
+      };
+      c.socket = { write() {}, end() {} };
+
+      const result = await c.repairNetwork();
+
+      expect(result.ok).toBe(true);
+      expect(c.protection.suspended).toBe(true);
+      expect(c.protection.phase).toBe('suspect');
+      expect(c.protection.reason).toBe('已执行一键修复，暂停自动断流');
+
+      const saved = JSON.parse(readFileSync(join(dir, 'protection-state.json'), 'utf8'));
+      expect(saved.suspended).toBe(true);
+      expect(saved.phase).toBe('suspect');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });
