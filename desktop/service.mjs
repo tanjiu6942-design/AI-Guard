@@ -251,8 +251,58 @@ export class DesktopService {
         });
         return [...report.items, ...(await this.aiRouteItems())];
       }
+      case "checkUpdate":
+        return this.checkUpdate();
       default:
         throw Error("未知桌面操作");
     }
   }
+
+  async checkUpdate() {
+    let currentVersion = "0.3.4";
+    try {
+      const pkg = JSON.parse(readFileSync(join(this.root, "package.json"), "utf8"));
+      currentVersion = pkg.version || currentVersion;
+    } catch {}
+    const repo = "tanjiu6942-design/AI-Guard";
+    const releaseUrl = `https://github.com/${repo}/releases/latest`;
+    try {
+      const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": `AI-Guard-Desktop/${currentVersion}`,
+        },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (!response.ok) {
+        return { hasUpdate: false, currentVersion, latestVersion: currentVersion, url: releaseUrl };
+      }
+      const data = await response.json();
+      const tagName = String(data.tag_name || "").replace(/^v/, "").trim();
+      const hasUpdate = isNewerVersion(tagName, currentVersion);
+      return {
+        hasUpdate,
+        currentVersion,
+        latestVersion: tagName || currentVersion,
+        url: data.html_url || releaseUrl,
+        releaseNotes: data.name ? `${data.name}\n${data.body || ""}`.trim() : (data.body || "").trim(),
+      };
+    } catch {
+      return { hasUpdate: false, currentVersion, latestVersion: currentVersion, url: releaseUrl };
+    }
+  }
+}
+
+export function isNewerVersion(remote, local) {
+  if (!remote || !local) return false;
+  const parse = (v) =>
+    String(v)
+      .replace(/^v/, "")
+      .split(".")
+      .map((x) => parseInt(x, 10) || 0);
+  const [rMaj = 0, rMin = 0, rPatch = 0] = parse(remote);
+  const [lMaj = 0, lMin = 0, lPatch = 0] = parse(local);
+  if (rMaj !== lMaj) return rMaj > lMaj;
+  if (rMin !== lMin) return rMin > lMin;
+  return rPatch > lPatch;
 }

@@ -88,6 +88,13 @@ export interface RepairResult {
   /** 失败原因；成功时为 null。 */
   error: string | null;
 }
+export interface UpdateInfo {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  url: string;
+  releaseNotes?: string;
+}
 export interface DesktopAPI {
   nodes(): Promise<NodeStatus>;
   selectNode(name: string): Promise<NodeStatus>;
@@ -112,6 +119,10 @@ export interface DesktopAPI {
   scan(): Promise<Finding[]>;
   chooseKernel(): Promise<string | null>;
   openFolder(): Promise<void>;
+  /** 检查 GitHub 是否有新版本发布。 */
+  checkUpdate(): Promise<UpdateInfo>;
+  /** 打开官方外部链接（受信任的 GitHub 地址）。 */
+  openUrl(url: string): Promise<void>;
 }
 declare global {
   interface Window {

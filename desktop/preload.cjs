@@ -21,6 +21,8 @@ const methods = [
   'detectTimezone',
   'setTimezone',
   'restoreTimezone',
+  'checkUpdate',
+  'openUrl',
 ];
 const api = Object.fromEntries(
   methods.map((name) => [

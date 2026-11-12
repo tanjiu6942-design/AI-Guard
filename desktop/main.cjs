@@ -280,6 +280,14 @@ if (workerIndex >= 0) {
               await shell.openPath(dataDir);
               return { ok: true, value: null };
             }
+            if (method === "openUrl") {
+              const url = String(payload || "");
+              if (/^https:\/\/github\.com\/tanjiu6942-design\/AI-Guard(\/.*)?$/i.test(url)) {
+                await shell.openExternal(url);
+                return { ok: true, value: null };
+              }
+              throw Error("不允许打开非官方链接");
+            }
             if (method === "releaseProtection")
               return { ok: true, value: await releaseProtection() };
             const value = method === "resumeProtection"

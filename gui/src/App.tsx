@@ -10,6 +10,7 @@ import {
   type NodeStatus,
   type TimezoneStatus,
   type DetectedTimezone,
+  type UpdateInfo,
 } from "./ipc";
 import Guide from "./panels/Guide";
 
@@ -90,6 +91,9 @@ export default function App() {
   const [zoneError, setZoneError] = useState("");
   const [detectedZone, setDetectedZone] = useState<DetectedTimezone | null>(null);
   const [detectingZone, setDetectingZone] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [dismissedUpdate, setDismissedUpdate] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const autoDetected = useRef(false);
   const zoneRequestGeneration = useRef(0);
   const zoneSelectionRevision = useRef(0);
@@ -123,6 +127,14 @@ export default function App() {
       .catch((e) => {
         if (alive) setNotice({ text: message(e), bad: true });
       });
+    void api
+      .checkUpdate()
+      .then((info) => {
+        if (alive && info?.hasUpdate) {
+          setUpdateInfo(info);
+        }
+      })
+      .catch(() => {});
     const id = setInterval(tick, 2000);
     return () => {
       alive = false;
@@ -313,6 +325,25 @@ export default function App() {
       setRepairing(false);
     }
   }
+  async function manualCheckUpdate() {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    setNotice(null);
+    try {
+      const info = await api.checkUpdate();
+      if (info?.hasUpdate) {
+        setUpdateInfo(info);
+        setDismissedUpdate(false);
+        setNotice({ text: `发现新版本 v${info.latestVersion}，点击右上角按钮即可前往下载。` });
+      } else {
+        setNotice({ text: `当前已是最新版本 (v${pkg.version})` });
+      }
+    } catch {
+      setNotice({ text: "无法连接到 GitHub 检查更新，请检查网络后重试。", bad: true });
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
   async function runDoctor() {
     const generation = ++checkGeneration.current;
     invalidateChecks(false);
@@ -491,8 +522,59 @@ export default function App() {
             <p className="eyebrow">AI GUARD / WINDOWS</p>
             <h1>{pages.find((p) => p.key === page)?.label}</h1>
           </div>
-          <span className="desktop-badge">桌面版 · {pkg.version}</span>
+          <div className="header-badges">
+            {updateInfo?.hasUpdate && (
+              <button
+                type="button"
+                className="update-badge"
+                onClick={() => void api.openUrl(updateInfo.url)}
+                title={`新版本 v${updateInfo.latestVersion} 已发布，点击前往 GitHub 下载`}
+              >
+                发现新版 v{updateInfo.latestVersion} ✨
+              </button>
+            )}
+            <button
+              type="button"
+              className="desktop-badge desktop-badge-btn"
+              onClick={() => void manualCheckUpdate()}
+              title="点击检查更新"
+              disabled={checkingUpdate}
+            >
+              桌面版 · {pkg.version}{checkingUpdate ? " (检查中…)" : ""}
+            </button>
+          </div>
         </header>
+        {updateInfo?.hasUpdate && !dismissedUpdate && (
+          <section className="card update-card">
+            <div className="update-row">
+              <div className="update-text">
+                <div className="update-title">
+                  <span className="update-dot" />
+                  <strong>发现新版本 v{updateInfo.latestVersion}</strong>
+                </div>
+                <p className="hint">
+                  {updateInfo.releaseNotes?.split("\n")[0] || "包含重要的功能优化与稳定性修复。建议覆盖升级以获取最新版本。"}
+                </p>
+              </div>
+              <div className="update-actions">
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => void api.openUrl(updateInfo.url)}
+                >
+                  前往下载更新
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => setDismissedUpdate(true)}
+                >
+                  稍后提醒
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
         {notice && (
           <div
             className={`notice ${notice.bad ? "error" : ""}`}
